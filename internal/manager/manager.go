@@ -106,6 +106,12 @@ type Manager struct {
 	queryTimeout      time.Duration
 	queryMaxRows      int
 
+	// queryDB is the least-privileged pool for user SQL (QUERY_PG_DSN), and
+	// queryRole the role it connects as. Nil means no reader is configured:
+	// only admins may run SQL, on the main pool.
+	queryDB   *sql.DB
+	queryRole string
+
 	// presets is the live set of DB-configured NATS environments.
 	presetMu sync.RWMutex
 	presets  map[string]natspreset.Preset
@@ -606,9 +612,38 @@ func (m *Manager) Rows(id string, limit, offset int, order string) ([]string, []
 	return pg.Rows(m.db, rec.Spec().Table, limit, offset, order)
 }
 
-// Query runs a read-only SQL query against the database with the configured row cap.
+// SetQueryReader routes user SQL through reader, a pool that connects as role.
+// Call it before Reconcile, so Reconcile grants role SELECT on every existing
+// recording table. The caller must have checked the role with
+// pg.CheckQueryReader first.
+func (m *Manager) SetQueryReader(reader *sql.DB, role string) {
+	m.queryDB = reader
+	m.queryRole = role
+}
+
+// ViewerSQLAllowed reports whether viewers may use the SQL console. That needs
+// the separate reader login; on the main pool user SQL could read secrets.
+func (m *Manager) ViewerSQLAllowed() bool { return m.queryDB != nil }
+
+// Query runs one read-only SQL statement with the configured row cap, on the
+// reader pool when one is configured.
 func (m *Manager) Query(ctx context.Context, sql string) ([]string, []map[string]interface{}, bool, error) {
-	return pg.Query(ctx, m.db, sql, m.queryTimeout, m.queryMaxRows)
+	db := m.db
+	if m.queryDB != nil {
+		db = m.queryDB
+	}
+	return pg.Query(ctx, db, sql, m.queryTimeout, m.queryMaxRows)
+}
+
+// grantQueryReader lets the reader role read one recording table. A missing
+// table is not an error: the grant runs again once the recording starts.
+func (m *Manager) grantQueryReader(table string) {
+	if m.queryDB == nil || m.db == nil {
+		return
+	}
+	if _, err := pg.GrantSelect(m.db, table, m.queryRole); err != nil {
+		slog.Warn("grant query reader", "table", table, "role", m.queryRole, "err", err)
+	}
 }
 
 // ExportCSV streams every row of one recording's table, oldest first.
@@ -698,6 +733,8 @@ func (m *Manager) Reconcile() error {
 		return err
 	}
 	for _, j := range jobs {
+		// Stopped recordings keep their tables, so the reader needs them too.
+		m.grantQueryReader(j.Spec.Table)
 		var tmpl proto.Message
 		if hasProtoSnapshot(j.Spec) {
 			modules, err := m.store.LoadProtoModules(j.Spec.ProtoModuleIDs)
@@ -1177,7 +1214,10 @@ func (m *Manager) startRecorder(rec *recorder.Recorder) error {
 	if !ok {
 		return fmt.Errorf("%w: unknown nats env %q", ErrValidate, rec.Spec().NATSEnv)
 	}
-	return rec.Start(m.rootCtx, m.dsn, preset)
+	err := rec.Start(m.rootCtx, m.dsn, preset)
+	// Start creates the table before it can fail on NATS, so grant either way.
+	m.grantQueryReader(rec.Spec().Table)
+	return err
 }
 
 func (m *Manager) validate(spec recorder.JobSpec) error {
@@ -1211,11 +1251,48 @@ func (m *Manager) validateWithTemplateLocked(spec recorder.JobSpec, tmpl proto.M
 	if err := recorder.ValidateSampling(spec, tmpl); err != nil {
 		return fmt.Errorf("%w: %v", ErrValidate, err)
 	}
-	if spec.Table == "" {
-		return fmt.Errorf("%w: table name is required", ErrValidate)
+	if err := m.checkTableLocked(spec); err != nil {
+		return err
+	}
+	for _, c := range spec.Columns {
+		if !pg.ValidColumnName(c.Column) {
+			return fmt.Errorf("%w: column name %q must be letters, digits and underscores, starting with a letter or underscore (max 63)", ErrValidate, c.Column)
+		}
 	}
 	if spec.RetentionHours < 1 || spec.RetentionHours > m.maxRetentionHours {
 		return fmt.Errorf("%w: retention_hours must be 1-%d — every recording needs a retention window", ErrValidate, m.maxRetentionHours)
+	}
+	return nil
+}
+
+// checkTableLocked rejects table names that could reach SQL unquoted, that
+// name one of Seath's own tables, or that name an existing table no recording
+// owns. Granting the query reader SELECT on such a table, or dropping it with
+// the recording, would expose or destroy data that is not a recording.
+func (m *Manager) checkTableLocked(spec recorder.JobSpec) error {
+	if spec.Table == "" {
+		return fmt.Errorf("%w: table name is required", ErrValidate)
+	}
+	if !pg.ValidTableName(spec.Table) {
+		return fmt.Errorf("%w: table name %q must be lower-case letters, digits and underscores, starting with a letter or underscore (max 63)", ErrValidate, spec.Table)
+	}
+	if pg.IsProtectedTable(spec.Table) {
+		return fmt.Errorf("%w: table name %q is reserved for Seath itself", ErrValidate, spec.Table)
+	}
+	for _, rec := range m.recorders {
+		if rec.Spec().Table == spec.Table {
+			return nil // the table belongs to a recording already
+		}
+	}
+	if m.db == nil {
+		return nil
+	}
+	exists, err := pg.TableExists(m.db, spec.Table)
+	if err != nil {
+		return fmt.Errorf("check table %q: %w", spec.Table, err)
+	}
+	if exists {
+		return fmt.Errorf("%w: table %q already exists and does not belong to a recording", ErrValidate, spec.Table)
 	}
 	return nil
 }

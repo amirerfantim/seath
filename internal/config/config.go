@@ -20,6 +20,11 @@ type NATSConfig struct {
 
 type PostgresConfig struct {
 	DSN string `yaml:"dsn"`
+	// QueryDSN is an optional second login used only for the SQL console. It
+	// must be a separate role that can read recording tables and nothing
+	// else; Seath checks this at boot and grants it SELECT on each recording
+	// table. Without it, only admins may use the SQL console.
+	QueryDSN string `yaml:"query_dsn"`
 }
 
 // DefaultMaxRetentionHours is the ceiling on a recording's retention window
@@ -152,6 +157,9 @@ func applyEnv(cfg *Config) error {
 	}
 	if v := os.Getenv("PG_DSN"); v != "" {
 		cfg.Postgres.DSN = v
+	}
+	if v := os.Getenv("QUERY_PG_DSN"); v != "" {
+		cfg.Postgres.QueryDSN = v
 	}
 	if v := os.Getenv("TOPIC"); v != "" {
 		cfg.Topic = v

@@ -10,10 +10,50 @@ import (
 	"strings"
 	"time"
 
+	"regexp"
+
 	"github.com/lib/pq"
 
 	"seath/internal/schema"
 )
+
+// identPattern is what a table or column name may look like: a plain SQL
+// identifier, at most 63 bytes. Proto field names always match it.
+var identPattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]{0,62}$`)
+
+// tablePattern is stricter for recording tables: lower case only, because
+// most queries quote the name and so do not fold case.
+var tablePattern = regexp.MustCompile(`^[a-z_][a-z0-9_]{0,62}$`)
+
+// columnTypes are the only column types EnsureTable writes. They are the
+// types schema.Introspect produces.
+var columnTypes = map[string]bool{"BIGINT": true, "BOOLEAN": true, "DOUBLE PRECISION": true, "INTEGER": true, "JSONB": true, "TEXT": true, "TIMESTAMPTZ": true}
+
+// ValidTableName reports whether name may be used as a recording table.
+func ValidTableName(name string) bool { return tablePattern.MatchString(name) }
+
+// ValidColumnName reports whether name may be used as a recording column.
+func ValidColumnName(name string) bool { return identPattern.MatchString(name) }
+
+// IsProtectedTable reports whether name is one of Seath's own tables.
+func IsProtectedTable(name string) bool {
+	for _, t := range ProtectedTables {
+		if strings.EqualFold(t, name) {
+			return true
+		}
+	}
+	return false
+}
+
+// ident validates name and returns it quoted. It lower-cases first, which is
+// exactly how Postgres resolves the unquoted names older versions wrote, so
+// existing tables and columns keep resolving.
+func ident(name string) (string, error) {
+	if !identPattern.MatchString(name) {
+		return "", fmt.Errorf("invalid identifier %q", name)
+	}
+	return pq.QuoteIdentifier(strings.ToLower(name)), nil
+}
 
 // reserved are the column names this package adds itself. A proto field that
 // maps to one of these would collide, so NormalizeColumns renames it.
@@ -53,8 +93,12 @@ func Connect(dsn string) (*sql.DB, error) {
 // IF NOT EXISTS, so this is safe to call repeatedly.
 func EnsureTable(db *sql.DB, table string, cols []schema.ColumnDef, indexTime bool) error {
 	cols = NormalizeColumns(cols)
+	qt, err := ident(table)
+	if err != nil {
+		return err
+	}
 	var sb strings.Builder
-	fmt.Fprintf(&sb, "CREATE TABLE IF NOT EXISTS %s (\n", table)
+	fmt.Fprintf(&sb, "CREATE TABLE IF NOT EXISTS %s (\n", qt)
 	sb.WriteString("  id          BIGSERIAL    PRIMARY KEY,\n")
 	sb.WriteString("  received_at TIMESTAMPTZ  NOT NULL DEFAULT NOW(),\n")
 	sb.WriteString("  nats_subject TEXT         NOT NULL")
@@ -62,7 +106,15 @@ func EnsureTable(db *sql.DB, table string, cols []schema.ColumnDef, indexTime bo
 		if !col.Include {
 			continue
 		}
-		fmt.Fprintf(&sb, ",\n  %s %s", col.Column, col.Type)
+		qc, err := ident(col.Column)
+		if err != nil {
+			return err
+		}
+		typ := strings.ToUpper(strings.TrimSpace(col.Type))
+		if !columnTypes[typ] {
+			return fmt.Errorf("invalid column type %q for %q", col.Type, col.Column)
+		}
+		fmt.Fprintf(&sb, ",\n  %s %s", qc, typ)
 	}
 	sb.WriteString("\n);")
 	if _, err := db.Exec(sb.String()); err != nil {
@@ -85,10 +137,16 @@ func EnsureTable(db *sql.DB, table string, cols []schema.ColumnDef, indexTime bo
 }
 
 func ensureIndex(db *sql.DB, table, column string) error {
-	idx := fmt.Sprintf("idx_%s_%s", table, column)
-	_, err := db.Exec(fmt.Sprintf(
-		"CREATE INDEX IF NOT EXISTS %s ON %s (%s)",
-		pq.QuoteIdentifier(idx), pq.QuoteIdentifier(table), pq.QuoteIdentifier(column)))
+	qt, err := ident(table)
+	if err != nil {
+		return err
+	}
+	qc, err := ident(column)
+	if err != nil {
+		return err
+	}
+	idx := strings.ToLower(fmt.Sprintf("idx_%s_%s", table, column))
+	_, err = db.Exec(fmt.Sprintf("CREATE INDEX IF NOT EXISTS %s ON %s (%s)", pq.QuoteIdentifier(idx), qt, qc))
 	return err
 }
 
@@ -137,14 +195,22 @@ func InsertBatch(db *sql.DB, table string, cols []schema.ColumnDef, rows []Row) 
 		}
 	}
 
+	qt, err := ident(table)
+	if err != nil {
+		return err
+	}
 	colNames := make([]string, 0, len(included)+1)
 	colNames = append(colNames, "nats_subject")
 	for _, c := range included {
-		colNames = append(colNames, c.Column)
+		qc, err := ident(c.Column)
+		if err != nil {
+			return err
+		}
+		colNames = append(colNames, qc)
 	}
 
 	var sb strings.Builder
-	fmt.Fprintf(&sb, "INSERT INTO %s (received_at, %s) VALUES ", table, strings.Join(colNames, ", "))
+	fmt.Fprintf(&sb, "INSERT INTO %s (received_at, %s) VALUES ", qt, strings.Join(colNames, ", "))
 	args := make([]interface{}, 0, len(rows)*(len(included)+1))
 	p := 1
 	for ri, row := range rows {
@@ -166,7 +232,7 @@ func InsertBatch(db *sql.DB, table string, cols []schema.ColumnDef, rows []Row) 
 		}
 		sb.WriteString(")")
 	}
-	_, err := db.Exec(sb.String(), args...)
+	_, err = db.Exec(sb.String(), args...)
 	return err
 }
 
@@ -271,9 +337,15 @@ func Rows(db *sql.DB, table string, limit, offset int, order string) ([]string, 
 }
 
 // Query runs an arbitrary user query in a READ ONLY transaction with a
-// configurable statement timeout and row cap. The read-only transaction makes
-// Postgres reject data-modifying and DDL statements. truncated reports whether
-// at least one additional row was available beyond maxRows.
+// configurable statement timeout and row cap. truncated reports whether at
+// least one additional row was available beyond maxRows.
+//
+// The query is prepared before it runs. Prepared statements use the extended
+// query protocol, which accepts exactly one statement, so input such as
+// "COMMIT; DROP TABLE t" is rejected instead of ending the read-only
+// transaction and running the rest with write access. Do not replace this
+// with a plain QueryContext: without arguments lib/pq uses the simple query
+// protocol, which runs every statement in the string.
 func Query(ctx context.Context, db *sql.DB, query string, timeout time.Duration, maxRows int) (cols []string, out []map[string]interface{}, truncated bool, err error) {
 	if maxRows < 1 {
 		return nil, nil, false, fmt.Errorf("max rows must be at least 1")
@@ -284,7 +356,12 @@ func Query(ctx context.Context, db *sql.DB, query string, timeout time.Duration,
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	rows, err := tx.QueryContext(ctx, query)
+	stmt, err := tx.PrepareContext(ctx, query)
+	if err != nil {
+		return nil, nil, false, err
+	}
+	defer stmt.Close()
+	rows, err := stmt.QueryContext(ctx)
 	if err != nil {
 		return nil, nil, false, err
 	}
@@ -553,4 +630,147 @@ func DatabaseSize(db *sql.DB) (sizePretty string, sizeBytes int64, err error) {
 		`SELECT pg_size_pretty(pg_database_size(current_database())), pg_database_size(current_database())`,
 	).Scan(&sizePretty, &sizeBytes)
 	return sizePretty, sizeBytes, err
+}
+
+// GrantSelectSQL returns the statement that lets the query reader role read
+// one recording table. Both identifiers are quoted.
+func GrantSelectSQL(table, role string) string {
+	return fmt.Sprintf("GRANT SELECT ON %s TO %s", pq.QuoteIdentifier(table), pq.QuoteIdentifier(role))
+}
+
+// TableExists reports whether a table with this exact name exists in the
+// search path.
+func TableExists(db *sql.DB, table string) (bool, error) {
+	var exists bool
+	err := db.QueryRow(`SELECT to_regclass($1) IS NOT NULL`, pq.QuoteIdentifier(table)).Scan(&exists)
+	return exists, err
+}
+
+// GrantSelect lets role read table, if the table exists. It returns false,
+// nil when the table does not exist yet.
+func GrantSelect(db *sql.DB, table, role string) (bool, error) {
+	exists, err := TableExists(db, table)
+	if err != nil {
+		return false, err
+	}
+	if !exists {
+		return false, nil
+	}
+	_, err = db.Exec(GrantSelectSQL(table, role))
+	return err == nil, err
+}
+
+// ProtectedTables are the application tables the query reader must never be
+// able to read or change: credentials, password hashes and recording specs.
+var ProtectedTables = []string{"recorder_presets", "recorder_users", "recorder_audit", "recorder_jobs", "custom_topics", "proto_modules"}
+
+// ReaderCheck is what CheckQueryReader learns about the reader login.
+type ReaderCheck struct {
+	Role     string
+	Problems []string
+}
+
+// protectedOIDsSQL resolves the protected tables on the MAIN connection, so
+// the names resolve with the main role's search_path (the schema the tables
+// really live in), not the reader's.
+const protectedOIDsSQL = `SELECT t, to_regclass(quote_ident(t))::oid FROM unnest($1::text[]) AS t`
+
+// readerCheckSQL inspects the connected role. It must run on the reader's own
+// connection, so current_user is the reader. $1 holds the protected tables'
+// OIDs. Membership in ANY other role is reported: a role the reader can SET
+// ROLE to (even without inheriting it) lends its privileges to a single
+// statement through set_config('role', ...) plus a runtime query such as
+// query_to_xml, so the only safe reader is a role with no memberships.
+const readerCheckSQL = `
+SELECT
+	current_user,
+	r.rolsuper,
+	r.rolbypassrls,
+	r.rolcreaterole,
+	COALESCE((SELECT array_agg(m.rolname::text ORDER BY m.rolname) FROM pg_roles m
+	          WHERE m.rolname <> current_user AND pg_has_role(current_user, m.oid, 'MEMBER')), '{}'),
+	COALESCE((SELECT array_agg(t::regclass::text ORDER BY t) FROM unnest($1::oid[]) AS t
+	          WHERE has_any_column_privilege(current_user, t, 'SELECT,INSERT,UPDATE,REFERENCES')
+	             OR has_table_privilege(current_user, t, 'DELETE,TRUNCATE,TRIGGER')), '{}')
+FROM pg_roles r
+WHERE r.rolname = current_user`
+
+// CheckQueryReader verifies that reader is a separate, least-privileged login
+// for user SQL. main is the application pool; every protected table must
+// already exist there. The result lists every problem found; an empty list
+// means the reader is safe to use.
+func CheckQueryReader(ctx context.Context, main, reader *sql.DB) (ReaderCheck, error) {
+	var c ReaderCheck
+	mainRole, err := CurrentRole(ctx, main)
+	if err != nil {
+		return c, fmt.Errorf("read main role: %w", err)
+	}
+	rows, err := main.QueryContext(ctx, protectedOIDsSQL, pq.StringArray(ProtectedTables))
+	if err != nil {
+		return c, err
+	}
+	var oids []int64
+	var missing []string
+	for rows.Next() {
+		var name string
+		var oid sql.NullInt64
+		if err := rows.Scan(&name, &oid); err != nil {
+			rows.Close()
+			return c, err
+		}
+		if oid.Valid {
+			oids = append(oids, oid.Int64)
+		} else {
+			missing = append(missing, name)
+		}
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return c, err
+	}
+
+	var super, bypassRLS, createRole bool
+	var memberOf, tables pq.StringArray
+	err = reader.QueryRowContext(ctx, readerCheckSQL, pq.Int64Array(oids)).
+		Scan(&c.Role, &super, &bypassRLS, &createRole, &memberOf, &tables)
+	if err != nil {
+		return c, err
+	}
+	c.Problems = readerProblems(c.Role, mainRole, super, bypassRLS, createRole, memberOf, tables, missing)
+	return c, nil
+}
+
+// readerProblems turns the facts about a reader role into human-readable
+// reasons it is unsafe. It is pure so the rules can be unit-tested.
+func readerProblems(role, mainRole string, super, bypassRLS, createRole bool, memberOf, tables, missing []string) []string {
+	var p []string
+	if role == mainRole {
+		p = append(p, fmt.Sprintf("it connects as %q, the same role as PG_DSN", role))
+	}
+	if super {
+		p = append(p, "it is a superuser")
+	}
+	if bypassRLS {
+		p = append(p, "it has BYPASSRLS")
+	}
+	if createRole {
+		p = append(p, "it has CREATEROLE")
+	}
+	if len(memberOf) > 0 {
+		p = append(p, "it is a member of "+strings.Join(memberOf, ", ")+" and can switch to those roles; the reader must not belong to any role")
+	}
+	if len(tables) > 0 {
+		p = append(p, "it has privileges on "+strings.Join(tables, ", "))
+	}
+	if len(missing) > 0 {
+		p = append(p, "the protected tables "+strings.Join(missing, ", ")+" were not found, so they cannot be checked")
+	}
+	return p
+}
+
+// CurrentRole returns the role a pool connects as.
+func CurrentRole(ctx context.Context, db *sql.DB) (string, error) {
+	var role string
+	err := db.QueryRowContext(ctx, `SELECT current_user`).Scan(&role)
+	return role, err
 }

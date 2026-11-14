@@ -16,6 +16,7 @@ import (
 	"seath/internal/prototypes"
 	"seath/internal/recorder"
 	"seath/internal/schema"
+	"seath/internal/secretbox"
 
 	"github.com/lib/pq"
 )
@@ -25,6 +26,10 @@ import (
 // process restarts.
 type Store struct {
 	db *sql.DB
+	// box encrypts preset passwords and tokens at rest. Nil means no
+	// SEATH_SECRET_KEY: new values are stored as plaintext and encrypted
+	// values cannot be read.
+	box *secretbox.Box
 }
 
 const createJobsTable = `
@@ -342,7 +347,28 @@ func (s *Store) ActivateProtoModule(id int64) error {
 	return tx.Commit()
 }
 
-// LoadPresets returns all DB-backed NATS environment presets.
+// presetAAD binds a stored secret to its preset and column, so ciphertext
+// copied into another row or column does not decrypt.
+func presetAAD(name, column string) string {
+	return "recorder_presets/" + name + "/" + column
+}
+
+// sealPreset returns the password and token as they are written to the
+// database: encrypted when a key is configured, plaintext otherwise.
+func (s *Store) sealPreset(p natspreset.Preset) (password, token string, err error) {
+	if s.box == nil {
+		return p.Password, p.Token, nil
+	}
+	if password, err = s.box.Seal(p.Password, presetAAD(p.Name, "password")); err != nil {
+		return "", "", err
+	}
+	if token, err = s.box.Seal(p.Token, presetAAD(p.Name, "token")); err != nil {
+		return "", "", err
+	}
+	return password, token, nil
+}
+
+// LoadPresets returns all DB-backed NATS environment presets, decrypted.
 func (s *Store) LoadPresets() ([]natspreset.Preset, error) {
 	rows, err := s.db.Query(`SELECT name, url, username, password, token FROM recorder_presets ORDER BY name`)
 	if err != nil {
@@ -355,6 +381,12 @@ func (s *Store) LoadPresets() ([]natspreset.Preset, error) {
 		if err := rows.Scan(&p.Name, &p.URL, &p.Username, &p.Password, &p.Token); err != nil {
 			return nil, err
 		}
+		if p.Password, err = s.box.Open(p.Password, presetAAD(p.Name, "password")); err != nil {
+			return nil, fmt.Errorf("preset %q password: %w", p.Name, err)
+		}
+		if p.Token, err = s.box.Open(p.Token, presetAAD(p.Name, "token")); err != nil {
+			return nil, fmt.Errorf("preset %q token: %w", p.Name, err)
+		}
 		out = append(out, p)
 	}
 	return out, rows.Err()
@@ -362,17 +394,25 @@ func (s *Store) LoadPresets() ([]natspreset.Preset, error) {
 
 // AddPreset upserts a DB-backed NATS environment preset.
 func (s *Store) AddPreset(p natspreset.Preset) error {
-	_, err := s.db.Exec(
+	password, token, err := s.sealPreset(p)
+	if err != nil {
+		return err
+	}
+	_, err = s.db.Exec(
 		`INSERT INTO recorder_presets (name, url, username, password, token) VALUES ($1, $2, $3, $4, $5)
 		 ON CONFLICT (name) DO UPDATE SET url = EXCLUDED.url, username = EXCLUDED.username, password = EXCLUDED.password, token = EXCLUDED.token`,
-		p.Name, p.URL, p.Username, p.Password, p.Token)
+		p.Name, p.URL, p.Username, password, token)
 	return err
 }
 
 // CreatePreset atomically inserts a preset, refusing existing names.
 func (s *Store) CreatePreset(p natspreset.Preset) error {
+	password, token, err := s.sealPreset(p)
+	if err != nil {
+		return err
+	}
 	result, err := s.db.Exec(`INSERT INTO recorder_presets (name, url, username, password, token)
-		VALUES ($1, $2, $3, $4, $5) ON CONFLICT (name) DO NOTHING`, p.Name, p.URL, p.Username, p.Password, p.Token)
+		VALUES ($1, $2, $3, $4, $5) ON CONFLICT (name) DO NOTHING`, p.Name, p.URL, p.Username, password, token)
 	if err != nil {
 		return err
 	}
@@ -384,6 +424,67 @@ func (s *Store) CreatePreset(p natspreset.Preset) error {
 		return ErrDuplicate
 	}
 	return nil
+}
+
+// UseSecretKey makes the store encrypt preset secrets with box, and encrypts
+// every preset password and token that is still plaintext. The rewrite runs in
+// one transaction, so a failure leaves the table as it was.
+func (s *Store) UseSecretKey(box *secretbox.Box) (encrypted int, err error) {
+	s.box = box
+	tx, err := s.db.Begin()
+	if err != nil {
+		return 0, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	rows, err := tx.Query(`SELECT name, password, token FROM recorder_presets FOR UPDATE`)
+	if err != nil {
+		return 0, err
+	}
+	type pending struct{ name, password, token string }
+	var todo []pending
+	for rows.Next() {
+		var p pending
+		if err := rows.Scan(&p.name, &p.password, &p.token); err != nil {
+			rows.Close()
+			return 0, err
+		}
+		if needsSealing(p.password) || needsSealing(p.token) {
+			todo = append(todo, p)
+		}
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return 0, err
+	}
+	for _, p := range todo {
+		password, token := p.password, p.token
+		if needsSealing(password) {
+			if password, err = box.Seal(password, presetAAD(p.name, "password")); err != nil {
+				return 0, err
+			}
+		}
+		if needsSealing(token) {
+			if token, err = box.Seal(token, presetAAD(p.name, "token")); err != nil {
+				return 0, err
+			}
+		}
+		if _, err := tx.Exec(`UPDATE recorder_presets SET password = $2, token = $3 WHERE name = $1`, p.name, password, token); err != nil {
+			return 0, err
+		}
+	}
+	return len(todo), tx.Commit()
+}
+
+// needsSealing reports whether a stored secret is non-empty plaintext.
+func needsSealing(v string) bool { return v != "" && !secretbox.IsEncrypted(v) }
+
+// CountPlaintextPresetSecrets counts presets whose password or token is stored
+// unencrypted, so boot can warn while SEATH_SECRET_KEY is unset.
+func (s *Store) CountPlaintextPresetSecrets() (int, error) {
+	var n int
+	err := s.db.QueryRow(`SELECT count(*) FROM recorder_presets
+		WHERE (password <> '' AND password NOT LIKE 'enc:v1:%') OR (token <> '' AND token NOT LIKE 'enc:v1:%')`).Scan(&n)
+	return n, err
 }
 
 // DeletePreset removes a DB-backed preset.

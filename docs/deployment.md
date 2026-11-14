@@ -16,6 +16,36 @@ Expose `/healthz` and `/readyz` for health checks. Allow long-lived SSE response
 Back up your database privately: it includes descriptors, mappings, recording
 data, account hashes, and environment credentials. Do not package it with source.
 
+## SQL console and secrets
+
+The SQL console runs one statement at a time in a read-only transaction. To let
+viewers use it, give it a separate login that can read recording tables and
+nothing else. Run this once as a database admin (`seath` is the role in
+`PG_DSN`):
+
+```sql
+CREATE ROLE seath_reader LOGIN PASSWORD '...';
+GRANT CONNECT ON DATABASE seath TO seath_reader;
+```
+
+Then set `QUERY_PG_DSN` to that login. Seath grants it `SELECT` on each
+recording table. At startup, Seath checks the reader and refuses to start if
+the reader is the `PG_DSN` role, belongs to any other role (including built-in
+`pg_*` roles), is a superuser or has `BYPASSRLS`/`CREATEROLE`, or has any
+privilege on `recorder_presets`, `recorder_users`, `recorder_audit` or the other
+internal tables. Do not grant the reader anything else. Without
+`QUERY_PG_DSN`, only admins can use the SQL console.
+
+Set `SEATH_SECRET_KEY` (from `openssl rand -base64 32`) to encrypt NATS
+environment passwords and tokens in the database. On the next start, Seath
+encrypts any values that are still plaintext. Keep the key in your secret
+manager and back it up: without it, Seath cannot read the stored credentials
+and refuses to start. Key rotation is not automated yet. To change the key,
+stop Seath, clear the stored credentials with
+`UPDATE recorder_presets SET password = '', token = ''`, start Seath with the
+new key, then enter the credentials again in Registry. Recordings keep their
+environments by name, so they are not affected.
+
 ## Explicit instance bootstrap
 
 Create an admin with `seath user add <name>` (password on stdin). Generate the

@@ -680,6 +680,12 @@ func (s *server) query(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "sql is required")
 		return
 	}
+	// Without the separate reader login (QUERY_PG_DSN), user SQL runs as the
+	// application role and could read stored secrets, so only admins get it.
+	if !s.mgr.ViewerSQLAllowed() && auth.RoleFromContext(r.Context()) != auth.RoleAdmin {
+		writeErr(w, http.StatusForbidden, "the SQL console needs an admin account until QUERY_PG_DSN is configured")
+		return
+	}
 	cols, rows, truncated, err := s.mgr.Query(r.Context(), body.SQL)
 	if err != nil {
 		// Query/syntax/permission errors are the user's to fix → 400 with the

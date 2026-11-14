@@ -438,3 +438,15 @@ func TestRecordingListUsesCompactSummaryAndFullRuleInteraction(t *testing.T) {
 		}
 	}
 }
+
+// Without QUERY_PG_DSN, user SQL would run as the application role, so only
+// admins may use it. The check must happen before any database access.
+func TestQueryNeedsAdminWithoutReader(t *testing.T) {
+	s := testServer()
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/query", strings.NewReader(`{"sql":"SELECT 1"}`))
+	s.query(rec, req)
+	if rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), "QUERY_PG_DSN") {
+		t.Fatalf("status = %d, body = %s; want 403 naming QUERY_PG_DSN", rec.Code, rec.Body.String())
+	}
+}

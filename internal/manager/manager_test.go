@@ -12,6 +12,7 @@ import (
 	"seath/internal/natspreset"
 	"seath/internal/prototypes"
 	"seath/internal/recorder"
+	"seath/internal/schema"
 )
 
 const testMaxRetentionHours = 24
@@ -247,5 +248,38 @@ func TestValidateRejectsUnknownTopicAndEnv(t *testing.T) {
 	spec.Table = ""
 	if err := m.validate(spec); err == nil {
 		t.Error("empty table name should be rejected")
+	}
+}
+
+// Table and column names reach DDL, the reader grant and DROP TABLE, so only
+// plain identifiers that are not Seath's own tables are accepted.
+func TestValidateTableAndColumnNames(t *testing.T) {
+	m := testManager(t)
+	for _, tc := range []struct {
+		name  string
+		table string
+		ok    bool
+	}{
+		{"plain", "example_events_20260825", true},
+		{"injection", `x(id int); GRANT SELECT ON recorder_presets TO r; CREATE TABLE y`, false},
+		{"upper case", "Events", false},
+		{"space", "my table", false},
+		{"too long", strings.Repeat("a", 64), false},
+		{"presets", "recorder_presets", false},
+		{"users", "recorder_users", false},
+		{"jobs", "recorder_jobs", false},
+	} {
+		spec := validSpec(t)
+		spec.Table = tc.table
+		err := m.validate(spec)
+		if (err == nil) != tc.ok {
+			t.Errorf("%s: table %q err = %v, want ok=%v", tc.name, tc.table, err, tc.ok)
+		}
+	}
+
+	spec := validSpec(t)
+	spec.Columns = []schema.ColumnDef{{Field: "first_value", Column: "v int); DROP TABLE recorder_users; --", Include: true}}
+	if err := m.validate(spec); err == nil || !errors.Is(err, ErrValidate) {
+		t.Errorf("injected column name accepted: %v", err)
 	}
 }

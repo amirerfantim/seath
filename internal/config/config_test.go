@@ -219,3 +219,15 @@ func TestLoadRetentionOverrideAndBounds(t *testing.T) {
 		})
 	}
 }
+
+func TestQueryDSNFromEnv(t *testing.T) {
+	t.Setenv("CONFIG_PATH", "")
+	t.Setenv("QUERY_PG_DSN", "postgres://reader@localhost/db")
+	cfg, err := LoadBase()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Postgres.QueryDSN != "postgres://reader@localhost/db" {
+		t.Errorf("QueryDSN = %q", cfg.Postgres.QueryDSN)
+	}
+}

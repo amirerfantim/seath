@@ -213,8 +213,9 @@ Dockerfile           alpine packaging of the CI-compiled binary
 All routes are served by one `http.ServeMux` (Go 1.22+ method-and-pattern
 routing) and wrapped by `auth.Middleware`. Authorization rule of thumb: **GET is
 allowed for any logged-in user; every mutating call requires `admin`**, with one
-deliberate exception — `POST /api/query` is allowed for `viewer` because it runs
-in a read-only transaction.
+deliberate exception — `POST /api/query` is allowed for `viewer` when
+`QUERY_PG_DSN` is set, because it then runs one prepared statement, in a
+read-only transaction, as a reader role that can only read recording tables.
 
 ### Health & session
 
@@ -280,7 +281,7 @@ in a read-only transaction.
 | Method & path | Auth | Why it exists / how it works |
 |---|---|---|
 | `GET /api/stats` | user | Whole-database on-disk size (`pg_database_size`). |
-| `POST /api/query` | user (incl. viewer) | Arbitrary SQL in a **read-only** transaction with a configurable timeout (90s by default) and row cap (15,000 by default). Safe because the read-only TX makes Postgres reject any write/DDL. Powers the SQL console + CSV/JSON export. |
+| `POST /api/query` | admin; viewer only with `QUERY_PG_DSN` | One prepared SQL statement in a **read-only** transaction with a configurable timeout (90s by default) and row cap (15,000 by default). Preparing rejects multi-statement input such as `COMMIT; ...`; with `QUERY_PG_DSN` it runs as a reader role that cannot see internal tables. Powers the SQL console + CSV/JSON export. |
 | `GET /api/recordings/{id}/export.csv` | user | Streams every row of a recording table as oldest-first CSV without buffering the whole table in Seath memory. |
 | `GET /api/audit` | admin | Recent mutating actions (who/method/path/status). Non-admins get `403`, which the UI uses to silently hide the audit card. |
 
@@ -768,9 +769,9 @@ Two rules follow from that:
 11. **Tests.** Unit tests run without a database. Ongoing targets:
     `schema.Introspect`/`ExtractValues`, the sampling gate math, `InsertBatch`
     SQL generation, and `config` env overrides.
-12. **Secrets at rest.** Custom preset passwords/tokens are stored in plaintext
-    in `recorder_presets`. Encrypt them with a key from the environment, or move
-    to Kubernetes Secrets referenced by name.
+12. **Secrets at rest.** Done: with `SEATH_SECRET_KEY`, preset passwords and
+    tokens are AES-256-GCM encrypted (`internal/secretbox`). Still open:
+    automated key rotation.
 13. **Seed required NATS environments during provisioning** so a fresh DB is
     ready without compiling infrastructure endpoints into the application.
 

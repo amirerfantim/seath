@@ -152,6 +152,8 @@ Environment variables override the file — handy in containers:
 | `MAX_RETENTION_HOURS` | ceiling on a recording's retention window (default `24`, minimum `1`) |
 | `QUERY_TIMEOUT_SECONDS` | timeout for read-only SQL queries and full-table CSV exports (default `90`, minimum `1`) |
 | `QUERY_MAX_ROWS` | maximum rows returned by interactive SQL (default `15000`, minimum `1`; full-table CSV export remains uncapped) |
+| `QUERY_PG_DSN` | separate read-only login for the SQL console. Without it, only admins can run SQL. See [deployment](docs/deployment.md#sql-console-and-secrets) |
+| `SEATH_SECRET_KEY` | base64 32-byte key (`openssl rand -base64 32`) that encrypts NATS environment passwords and tokens in the database |
 | `RETENTION_HOURS` | retention window for the headless `start` command (defaults to the ceiling) |
 
 ---

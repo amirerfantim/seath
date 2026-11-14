@@ -26,6 +26,7 @@ import (
 	"seath/internal/prototypes"
 	"seath/internal/recorder"
 	"seath/internal/schema"
+	"seath/internal/secretbox"
 )
 
 func main() {
@@ -226,15 +227,29 @@ func serveCmd() *cli.Command {
 				return fmt.Errorf("store: %w", err)
 			}
 
-			mgr := manager.New(ctx, db, cfg.Postgres.DSN, store, cfg.MaxRetentionHours, cfg.QueryTimeoutSeconds, cfg.QueryMaxRows)
-			if err := mgr.Reconcile(); err != nil {
-				return fmt.Errorf("reconcile: %w", err)
+			if err := setupSecretKey(store); err != nil {
+				return err
 			}
-
+			// auth.New creates recorder_users and recorder_audit. It must run
+			// before the reader check, which requires every protected table.
 			authn, err := auth.New(db)
 			if err != nil {
 				return fmt.Errorf("auth: %w", err)
 			}
+
+			mgr := manager.New(ctx, db, cfg.Postgres.DSN, store, cfg.MaxRetentionHours, cfg.QueryTimeoutSeconds, cfg.QueryMaxRows)
+			reader, err := setupQueryReader(ctx, db, cfg.Postgres.QueryDSN)
+			if err != nil {
+				return err
+			}
+			if reader != nil {
+				defer reader.db.Close()
+				mgr.SetQueryReader(reader.db, reader.role)
+			}
+			if err := mgr.Reconcile(); err != nil {
+				return fmt.Errorf("reconcile: %w", err)
+			}
+
 			if n, _ := auth.CountUsers(db); n == 0 {
 				slog.Warn("no users configured — the UI will reject all logins until you run `seath user add <username>`")
 			}
@@ -260,6 +275,63 @@ func serveCmd() *cli.Command {
 			return nil
 		},
 	}
+}
+
+// setupSecretKey turns on preset secret encryption when SEATH_SECRET_KEY is
+// set, and encrypts any preset secret still stored as plaintext.
+func setupSecretKey(store *manager.Store) error {
+	encoded := os.Getenv(secretbox.KeyEnv)
+	if encoded == "" {
+		if n, err := store.CountPlaintextPresetSecrets(); err == nil && n > 0 {
+			slog.Warn("NATS preset secrets are stored unencrypted; set "+secretbox.KeyEnv+" to encrypt them", "presets", n)
+		}
+		return nil
+	}
+	box, err := secretbox.ParseKey(encoded)
+	if err != nil {
+		return err
+	}
+	n, err := store.UseSecretKey(box)
+	if err != nil {
+		return fmt.Errorf("encrypt preset secrets: %w", err)
+	}
+	if n > 0 {
+		slog.Info("encrypted plaintext NATS preset secrets", "presets", n)
+	}
+	return nil
+}
+
+type queryReader struct {
+	db   *sql.DB
+	role string
+}
+
+// setupQueryReader connects the SQL-console login (QUERY_PG_DSN) and refuses
+// to start if it is not strictly less privileged than the main login. With no
+// DSN it returns nil, and only admins may use the SQL console.
+func setupQueryReader(ctx context.Context, main *sql.DB, dsn string) (*queryReader, error) {
+	if dsn == "" {
+		slog.Warn("QUERY_PG_DSN is not set; the SQL console is limited to admins")
+		return nil, nil
+	}
+	reader, err := pg.Connect(dsn)
+	if err != nil {
+		return nil, fmt.Errorf("query reader connect: %w", err)
+	}
+	// Viewers share this pool; cap it so they cannot use up max_connections
+	// that the recorders need.
+	reader.SetMaxOpenConns(4)
+	check, err := pg.CheckQueryReader(ctx, main, reader)
+	if err != nil {
+		reader.Close()
+		return nil, fmt.Errorf("check query reader: %w", err)
+	}
+	if len(check.Problems) > 0 {
+		reader.Close()
+		return nil, fmt.Errorf("QUERY_PG_DSN role %q is not safe for user SQL: %s", check.Role, strings.Join(check.Problems, "; "))
+	}
+	slog.Info("SQL console uses a separate read-only login", "role", check.Role)
+	return &queryReader{db: reader, role: check.Role}, nil
 }
 
 func userCmd() *cli.Command {
