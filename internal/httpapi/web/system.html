@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>System · Seath</title>
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header class="appbar">
+    <a class="brand" href="/">
+      <span class="brand-mark"></span>
+      <span class="brand-name">Seath</span>
+    </a>
+    <nav class="nav">
+      <a href="/" class="nav-link">Recordings</a>
+      <a href="/tap.html" class="nav-link">Tap</a>
+      <a href="/registry.html" class="nav-link">Registry</a>
+      <a href="/system.html" class="nav-link active">System</a>
+    </nav>
+    <div class="appbar-right"><span id="role-badge" class="role-badge"></span><button id="logout-btn" class="small">Sign out</button></div>
+  </header>
+
+  <main>
+    <section class="card">
+      <h2>Resources <span id="sys-msg" class="db-size"></span></h2>
+      <div class="gauges">
+        <div class="gauge">
+          <div class="gauge-head"><span class="gauge-name">CPU</span><span class="gauge-pct" id="cpu-pct">—</span></div>
+          <div class="gauge-track"><div class="gauge-fill" id="cpu-bar"></div></div>
+          <div class="gauge-sub" id="cpu-sub">—</div>
+        </div>
+        <div class="gauge">
+          <div class="gauge-head"><span class="gauge-name">Memory</span><span class="gauge-pct" id="mem-pct">—</span></div>
+          <div class="gauge-track"><div class="gauge-fill" id="mem-bar"></div></div>
+          <div class="gauge-sub" id="mem-sub">—</div>
+        </div>
+      </div>
+    </section>
+
+    <section class="card" id="pghost-card" style="display:none">
+      <h2>PostgreSQL host <span id="pghost-meta" class="db-size"></span></h2>
+      <div class="gauges">
+        <div class="gauge">
+          <div class="gauge-head"><span class="gauge-name">PG CPU</span><span class="gauge-pct" id="pgcpu-pct">—</span></div>
+          <div class="gauge-track"><div class="gauge-fill" id="pgcpu-bar"></div></div>
+          <div class="gauge-sub" id="pgcpu-sub">—</div>
+        </div>
+        <div class="gauge">
+          <div class="gauge-head"><span class="gauge-name">PG Memory</span><span class="gauge-pct" id="pgmem-pct">—</span></div>
+          <div class="gauge-track"><div class="gauge-fill" id="pgmem-bar"></div></div>
+          <div class="gauge-sub" id="pgmem-sub">—</div>
+        </div>
+        <div class="gauge">
+          <div class="gauge-head"><span class="gauge-name">PG Disk</span><span class="gauge-pct" id="pgdisk-pct">—</span></div>
+          <div class="gauge-track"><div class="gauge-fill" id="pgdisk-bar"></div></div>
+          <div class="gauge-sub" id="pgdisk-sub">—</div>
+        </div>
+      </div>
+      <div class="insights" id="pghost-stats" style="margin-top:16px"></div>
+    </section>
+
+    <section class="card">
+      <h2>Recording health <span id="nats-state" class="db-size"></span></h2>
+      <div class="insights" id="rechealth"></div>
+    </section>
+
+    <section class="card">
+      <h2>Workload &amp; database</h2>
+      <div class="insights" id="workload"></div>
+    </section>
+
+    <section class="card">
+      <h2>Largest tables <span id="toptables-count" class="db-size"></span></h2>
+      <table class="preview" id="toptables"><tbody><tr><td class="empty">—</td></tr></tbody></table>
+    </section>
+
+    <section class="card">
+      <h2>Runtime</h2>
+      <div class="insights" id="runtime"></div>
+    </section>
+  </main>
+
+  <script src="system.js"></script>
+</body>
+</html>

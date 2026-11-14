@@ -1,0 +1,26 @@
+nats:
+  address: "nats://127.0.0.1:4222"
+  username: ""
+  password: ""
+  mode: core  # core | jetstream
+
+postgres:
+  dsn: ""  # Supply PG_DSN through your environment or secret manager.
+
+topic: "example.events.order.created"
+table: "example_order_events"
+sample_rate: 10  # percentage: 100=all, 10=10%, 1=1%
+
+# columns: []  # Leave empty to auto-generate from proto.
+# Run `seath schema --topic example.events.order.created` to get a preview,
+# then paste the output here to customize column names or exclude fields.
+
+# Retention is mandatory. retention_hours defaults to max_retention_hours;
+# neither may be 0 — there is no keep-forever.
+max_retention_hours: 24
+retention_hours: 24
+
+# Read-only SQL queries and full-table CSV exports. Can also be overridden by
+# QUERY_TIMEOUT_SECONDS per Seath deployment.
+query_timeout_seconds: 90
+query_max_rows: 15000  # interactive SQL only; full-table CSV export is uncapped

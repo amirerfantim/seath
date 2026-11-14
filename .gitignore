@@ -1,0 +1,56 @@
+# Go build output
+/seath
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+coverage.html
+coverage.out
+
+# Vendored dependencies (resolved via GOPROXY)
+/vendor/
+
+# IDE / editor
+.idea/
+.vscode/
+*.code-workspace
+
+# OS
+.DS_Store
+
+.last-cleanup
+backups/
+cache/
+file-history/
+image-cache/
+plans/
+projects/
+session-env/
+sessions/
+shell-snapshots/
+tasks/
+telemetry/
+history.jsonl
+settings.json
+settings.local.json
+
+# Private instance data and local release outputs
+/email/
+/visuals/
+/.lavish/
+/dist/
+/build/
+/.env
+/.env.*
+*.local.yaml
+*.local.json
+*.protoset
+*.dump
+*.sql.gz
+*.tar
+*.tar.gz
+__pycache__/
+*.pyc

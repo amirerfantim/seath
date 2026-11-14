@@ -1,0 +1,71 @@
+flowchart TB
+    subgraph external["External systems"]
+        NATS["NATS clusters<br/>(primary / secondary / custom)"]
+        Browser["Operator's browser<br/>(embedded SPA)"]
+    end
+
+    subgraph pod["Seath pod (single replica, 'serve')"]
+        direction TB
+
+        subgraph http["httpapi — HTTP layer"]
+            MW["auth.Middleware<br/>session + RBAC + audit"]
+            MUX["ServeMux router"]
+            SSE["SSE streams<br/>/recordings/stream<br/>/taps/stream"]
+            UI["embedded web UI<br/>(embed.FS)"]
+        end
+
+        subgraph mgr["manager — control plane"]
+            REG["recorders map<br/>id to Recorder"]
+            TAPS["taps map<br/>id to Tap"]
+            PRESETS["merged NATS presets"]
+            CUSTOM["custom topic to proto map"]
+            LOOPS["background loops<br/>flush / retry / cleanup"]
+        end
+
+        subgraph rec["recorder — per recording (hot path)"]
+            SUB["NATS subscription"]
+            SAMP["sampling gates<br/>percentage AND field filters"]
+            DEC["proto.Unmarshal<br/>+ schema.ExtractValues"]
+            CH["buffered rowCh<br/>(16384, drop if full)"]
+            WL["writeLoop<br/>batch 500 / 250ms"]
+        end
+
+        subgraph tap["tap — ephemeral probe"]
+            TSUB["NATS subscription"]
+            TCOUNT["count + bytes + ring buffer<br/>schema-less wire decode"]
+        end
+
+        PGPKG["pg — SQL helpers"]
+    end
+
+    subgraph db["PostgreSQL (application database)"]
+        DATA[("recording tables<br/>one per recording")]
+        META[("recorder_jobs / _users /<br/>_audit / _presets / custom_topics")]
+    end
+
+    NATS -->|"proto bytes"| SUB
+    SUB --> SAMP
+    SAMP -->|"kept"| DEC
+    SAMP -.->|"dropped by sampling"| X1((discard))
+    DEC --> CH
+    CH --> WL
+    WL -->|"multi-row INSERT"| DATA
+
+    NATS -->|"proto bytes"| TSUB
+    TSUB --> TCOUNT
+
+    Browser <-->|"HTTPS via ingress"| MW
+    MW --> MUX
+    MUX --> mgr
+    MUX --> UI
+    SSE -->|"1 Hz JSON snapshots"| Browser
+    mgr --> REG
+    mgr --> TAPS
+    REG --> rec
+    TAPS --> tap
+    mgr --> PGPKG
+    PGPKG --> META
+    PGPKG -->|"stats / rows / read-only SQL"| DATA
+    LOOPS -->|"persist counters / retry / retention"| PGPKG
+
+    mgr -->|"save specs, counters,<br/>desired_state"| META

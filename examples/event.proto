@@ -1,0 +1,7 @@
+syntax = "proto3";
+package example.events;
+message Event {
+  uint64 event_id = 1;
+  string value = 2;
+  bool enabled = 3;
+}

@@ -1,0 +1,72 @@
+stages: [test, build, release]
+
+variables:
+  GO_PROXY: "https://proxy.golang.org,direct"
+
+test:
+  image: golang:1.25.12
+  stage: test
+  script:
+    - test -z "$(gofmt -l cmd internal)"
+    - GOPROXY="$GO_PROXY" go mod download
+    - go vet ./...
+    - go test -race ./...
+    - CGO_ENABLED=0 go build -trimpath -buildvcs=false -o /tmp/seath ./cmd
+
+bootstrap-test:
+  image: python:3.13-slim
+  stage: test
+  script:
+    - python3 -m unittest discover -s tools
+
+build:
+  image: docker:27.5.1
+  stage: build
+  variables:
+    DOCKER_DRIVER: overlay2
+  script:
+    - docker build --build-arg GO_PROXY="$GO_PROXY" --build-arg APK_REPOSITORIES="$APK_REPOSITORIES" -t seath:$CI_COMMIT_REF_SLUG .
+    - docker save -o seath-image.tar seath:$CI_COMMIT_REF_SLUG
+  artifacts:
+    paths: [seath-image.tar]
+    expire_in: 1 week
+
+.release:
+  image: docker:19.03.9
+  stage: release
+  variables:
+    DOCKER_DRIVER: overlay2
+  dependencies: [build]
+  script:
+    - test -n "$RELEASE_REGISTRY" && test -n "$RELEASE_IMAGE" && test -n "$RELEASE_USER" && test -n "$RELEASE_PASSWORD"
+    - printf '%s' "$RELEASE_PASSWORD" | docker login --username "$RELEASE_USER" --password-stdin "$RELEASE_REGISTRY"
+    - docker load --input seath-image.tar
+    - docker tag seath:$CI_COMMIT_REF_SLUG "$RELEASE_IMAGE:$CI_COMMIT_REF_SLUG"
+    - docker push "$RELEASE_IMAGE:$CI_COMMIT_REF_SLUG"
+
+release:primary:
+  extends: .release
+  environment:
+    name: registry/primary
+    action: prepare
+  variables:
+    RELEASE_REGISTRY: "$PRIMARY_REGISTRY"
+    RELEASE_IMAGE: "$PRIMARY_IMAGE"
+    RELEASE_USER: "$PRIMARY_REGISTRY_USER"
+    RELEASE_PASSWORD: "$PRIMARY_REGISTRY_PASSWORD"
+  rules:
+    - if: '$CI_COMMIT_TAG && $PRIMARY_REGISTRY'
+
+release:secondary:
+  extends: .release
+  environment:
+    name: registry/secondary
+    action: prepare
+  variables:
+    RELEASE_REGISTRY: "$SECONDARY_REGISTRY"
+    RELEASE_IMAGE: "$SECONDARY_IMAGE"
+    RELEASE_USER: "$SECONDARY_REGISTRY_USER"
+    RELEASE_PASSWORD: "$SECONDARY_REGISTRY_PASSWORD"
+  rules:
+    - if: '$CI_COMMIT_TAG && $SECONDARY_REGISTRY'
+      when: manual

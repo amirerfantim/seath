@@ -1,0 +1,65 @@
+Seath — third-party notices
+===========================
+
+This file lists third-party material that is redistributed as part of Seath,
+either inside the source tree or embedded into the compiled binary and the
+container image.
+
+Seath's own code and first-party assets are licensed under the MIT License;
+see LICENSE at the repository root. Third-party material retains its respective
+licences and copyright notices described below.
+
+
+1. Fonts (embedded into the binary via `go:embed` and served by the console)
+---------------------------------------------------------------------------
+
+Inter
+  File:      internal/httpapi/web/fonts/inter.woff2
+  Version:   4.001 (build git-66647c0bb), Regular, variable weight 100..900
+  Upstream:  https://github.com/rsms/inter
+  Copyright: Copyright (c) 2016 The Inter Project Authors
+             (https://github.com/rsms/inter)
+  Licence:   SIL Open Font License, Version 1.1
+  Text:      internal/httpapi/web/fonts/Inter-LICENSE.txt
+  Changes:   subset to the Latin/punctuation code points used by the console.
+             No Reserved Font Name is declared upstream, so the family name
+             "Inter" is retained.
+
+JetBrains Mono
+  File:      internal/httpapi/web/fonts/jetbrains-mono.woff2
+  Version:   2.211, Regular, variable weight 100..800
+  Upstream:  https://github.com/JetBrains/JetBrainsMono
+  Copyright: Copyright 2020 The JetBrains Mono Project Authors
+             (https://github.com/JetBrains/JetBrainsMono)
+  Licence:   SIL Open Font License, Version 1.1
+  Text:      internal/httpapi/web/fonts/JetBrainsMono-LICENSE.txt
+  Changes:   subset to the Latin/punctuation code points used by the console.
+             No Reserved Font Name is declared upstream, so the family name
+             "JetBrains Mono" is retained.
+
+The SIL Open Font License requires that these copyright notices and the licence
+text travel with the font files. Both licence files sit next to the fonts, are
+embedded by the same `go:embed` directive, and are served by the console, so
+every distribution form (source tree, binary, container image) carries them.
+
+
+2. Go modules
+-------------
+
+Seath links Go modules listed in `go.mod` / `go.sum`. They are fetched at build
+time and are not vendored into this repository. Their licences are those
+published by their upstream projects; run `go list -m all` on a build tree to
+enumerate the exact versions in use.
+
+
+3. First-party assets
+---------------------
+
+The following are original to this project and carry Seath's own licence:
+
+  internal/httpapi/web/favicon.svg   hand-authored SVG
+  docs/diagrams/*.mmd                Mermaid diagram sources
+  docs/diagrams/*.svg                rendered from the .mmd sources above;
+                                     no third-party artwork, no embedded
+                                     raster images, no author metadata
+  examples/event.proto               synthetic example schema

@@ -1,0 +1,14 @@
+flowchart LR
+    NATS["NATS topic<br/>(proto messages)"]
+    subgraph seath["Seath"]
+        SUB["subscribe"]
+        SAMPLE["sample<br/>(keep N%)"]
+        DECODE["decode proto<br/>to table row"]
+        BATCH["batch writer"]
+    end
+    PG[("PostgreSQL<br/>one table per recording")]
+    UI["Web console<br/>+ read-only SQL"]
+
+    NATS --> SUB --> SAMPLE --> DECODE --> BATCH --> PG
+    UI -->|"create / start / stop"| seath
+    PG -->|"browse / query / export"| UI

@@ -1,0 +1,13 @@
+stateDiagram-v2
+    [*] --> stopped: Create (persisted)
+    stopped --> running: Start (desired=running)
+    running --> stopped: Stop (desired=stopped)
+    running --> error: NATS/PG failure
+    error --> running: retryLoop (every 30s)
+    stopped --> [*]: Delete (drops table)
+
+    note right of running
+        hot path: sample to decode to
+        extract to buffer to batch insert
+        counters flushed every 30s
+    end note

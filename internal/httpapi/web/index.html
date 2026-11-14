@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Seath</title>
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header class="appbar">
+    <a class="brand" href="/">
+      <span class="brand-mark"></span>
+      <span class="brand-name">Seath</span>
+    </a>
+    <nav class="nav">
+      <a href="/" class="nav-link active">Recordings</a>
+      <a href="/tap.html" class="nav-link">Tap</a>
+      <a href="/registry.html" class="nav-link">Registry</a>
+      <a href="/system.html" class="nav-link">System</a>
+    </nav>
+    <div class="appbar-right"><span id="role-badge" class="role-badge"></span><button id="logout-btn" class="small">Sign out</button></div>
+  </header>
+
+  <main>
+    <section class="card admin-only" id="builder">
+      <h2>New recording</h2>
+
+      <div class="field">
+        <label for="topic">Topic</label>
+        <input list="topics" id="topic" placeholder="e.g. example.events.order.created" autocomplete="off" />
+        <datalist id="topics"></datalist>
+      </div>
+
+      <div id="schema-area" class="hidden">
+        <div class="field">
+          <label>Columns <small>(rename the column, untick to exclude — edits only apply to brand-new tables)</small></label>
+          <table class="columns">
+            <thead>
+              <tr><th>include</th><th title="create a btree index on this column">index</th><th>proto field</th><th>column name</th><th>type</th></tr>
+            </thead>
+            <tbody id="columns-body"></tbody>
+          </table>
+        </div>
+
+        <div class="sampling-builder">
+          <div class="sample-traffic">
+            <div>
+              <label for="sample">Traffic percentage: <strong><span id="sample-val">10</span>%</strong></label>
+              <p class="hint">Applied first by arrival order. Set 100% to rely only on field filters.</p>
+            </div>
+            <input type="range" id="sample" min="1" max="100" value="10" />
+          </div>
+          <div class="filter-heading">
+            <div><label>Field filters</label><p class="hint">Every filter must match. Values inside one exact filter are alternatives.</p></div>
+            <div class="filter-adds" id="sample-filter-adds">
+              <button type="button" class="small accent" data-add-filter="exact">+ Exact value</button>
+              <button type="button" class="small accent" data-add-filter="modulo_range">+ Modulo range</button>
+              <button type="button" class="small accent" data-add-filter="float_compare">+ Float comparison</button>
+            </div>
+          </div>
+          <div id="sample-filters" class="filter-list"></div>
+        </div>
+
+        <div class="field">
+          <label>NATS environment</label>
+          <div id="presets"></div>
+        </div>
+
+        <div class="field">
+          <label for="table">Postgres table name</label>
+          <input id="table" placeholder="table name" autocomplete="off" />
+        </div>
+
+        <div class="row">
+          <div class="field">
+            <label for="retention">Retention <small id="retention-hint">(hours, required)</small></label>
+            <input type="number" id="retention" min="1" required />
+          </div>
+          <div class="field">
+            <label>Time index</label>
+            <label class="check-line"><input type="checkbox" id="index-time" /> Index <code>received_at</code> <small>(recommended for time-range queries)</small></label>
+          </div>
+        </div>
+
+        <div class="actions">
+          <button id="create-btn" class="primary">Create recording</button>
+          <span id="builder-msg" class="msg"></span>
+        </div>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>Recordings</h2>
+      <div class="table-wrap">
+        <table class="recordings">
+          <thead>
+            <tr>
+              <th>status</th><th>topic</th><th>table</th>
+              <th class="num" title="on-disk size of the table">size</th>
+              <th class="num" title="write rate, rows per second">rate</th>
+              <th>env</th><th class="sample-col">sample</th>
+              <th class="num" title="messages received on NATS (cumulative, survives restarts)">received</th>
+              <th class="num" title="rows written (cumulative, survives restarts)">written</th>
+              <th class="num">errors</th>
+              <th class="num" title="messages dropped because the write buffer was full (backpressure)">dropped</th>
+              <th>started</th>
+            </tr>
+          </thead>
+          <tbody id="recordings-body">
+            <tr><td colspan="12" class="empty">No recordings yet.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+  <div id="preview-modal" class="modal hidden">
+    <div class="modal-box">
+      <div class="modal-head">
+        <span id="preview-title">Preview</span>
+        <button id="preview-close" class="small">Close</button>
+      </div>
+      <div id="preview-body" class="modal-body"></div>
+    </div>
+  </div>
+
+  <div id="rate-modal" class="modal hidden">
+    <div class="modal-box rate-box">
+      <div class="modal-head">
+        <span id="rate-title">Sampling</span>
+        <button id="rate-cancel" class="small">Cancel</button>
+      </div>
+      <div class="modal-body" style="padding:26px 28px">
+        <div class="sample-traffic modal-traffic">
+          <div class="rate-display"><span id="rate-value">10</span><span class="rate-unit">%</span></div>
+          <div class="traffic-controls">
+            <label for="rate-slider">Traffic percentage</label>
+            <input type="range" id="rate-slider" min="1" max="100" value="10" />
+            <div class="rate-scale"><span>1%</span><span>100%</span></div>
+            <div id="rate-presets" class="rate-presets">
+              <button class="chip" data-rate="1">1%</button>
+              <button class="chip" data-rate="5">5%</button>
+              <button class="chip" data-rate="10">10%</button>
+              <button class="chip" data-rate="25">25%</button>
+              <button class="chip" data-rate="50">50%</button>
+              <button class="chip" data-rate="100">100%</button>
+            </div>
+          </div>
+        </div>
+        <div class="filter-heading modal-filters-head">
+          <div><label>Field filters</label><p class="hint">All conditions are combined with AND.</p></div>
+          <div class="filter-adds" id="rate-filter-adds">
+            <button type="button" class="small accent" data-add-filter="exact">+ Exact value</button>
+            <button type="button" class="small accent" data-add-filter="modulo_range">+ Modulo range</button>
+            <button type="button" class="small accent" data-add-filter="float_compare">+ Float comparison</button>
+          </div>
+        </div>
+        <div id="rate-filters" class="filter-list"></div>
+
+        <div class="rate-actions">
+          <input type="number" id="rate-number" min="1" max="100" value="10" />
+          <button id="rate-apply" class="primary">Apply</button>
+        </div>
+        <div id="rate-msg" class="msg"></div>
+      </div>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#8b6dff"/>
+      <stop offset="0.6" stop-color="#5b8cff"/>
+      <stop offset="1" stop-color="#4fb4ff"/>
+    </linearGradient>
+    <linearGradient id="cr" x1="0" y1="0" x2="0.35" y2="1">
+      <stop offset="0" stop-color="#ffffff"/>
+      <stop offset="1" stop-color="#bcd8f5"/>
+    </linearGradient>
+  </defs>
+  <!-- Seath the Scaleless: pale primordial crystal -->
+  <rect x="1" y="1" width="30" height="30" rx="8" fill="url(#bg)"/>
+  <g stroke="#3a5a86" stroke-width="0.7" stroke-linejoin="round">
+    <polygon points="16,3 23,11 23,19 16,29 9,19 9,11" fill="url(#cr)"/>
+    <path d="M9,11 H23 M9,19 H23 M16,3 V29" stroke-opacity="0.45" fill="none"/>
+  </g>
+</svg>

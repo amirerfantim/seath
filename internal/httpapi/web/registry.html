@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>registry · Seath</title>
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header class="appbar">
+    <a class="brand" href="/">
+      <span class="brand-mark"></span>
+      <span class="brand-name">Seath</span>
+    </a>
+    <nav class="nav">
+      <a href="/" class="nav-link">Recordings</a>
+      <a href="/tap.html" class="nav-link">Tap</a>
+      <a href="/registry.html" class="nav-link active">Registry</a>
+      <a href="/system.html" class="nav-link">System</a>
+    </nav>
+    <div class="appbar-right"><span id="role-badge" class="role-badge"></span><button id="logout-btn" class="small">Sign out</button></div>
+  </header>
+
+  <main>
+    <section class="card catalogue-card">
+      <div class="catalogue-heading">
+        <div>
+          <div class="eyebrow">Runtime catalogue</div>
+          <h1>Proto modules</h1>
+          <p id="catalogue-source" class="subtitle"></p>
+        </div>
+        <span id="catalogue-mode" class="mode-pill loading">Loading</span>
+      </div>
+      <div class="catalogue-stats">
+        <div class="catalogue-stat"><strong id="type-count">—</strong><span>message types</span></div>
+        <div class="catalogue-stat"><strong id="module-count">—</strong><span>active modules</span></div>
+        <div class="catalogue-stat"><strong id="staged-count">—</strong><span>staged versions</span></div>
+      </div>
+      <div class="section-label">Active versions</div>
+      <div id="modules" class="module-grid"><div class="module-empty">Loading catalogue…</div></div>
+    </section>
+
+    <section class="card admin-only proto-import-card">
+      <div class="card-title-row">
+        <div>
+          <div class="eyebrow">No rebuild required</div>
+          <h2>Import a proto module</h2>
+          <p class="subtitle">Stage a descriptor bundle, review it, then activate when you are ready.</p>
+        </div>
+        <div class="instance-chip"><span></span>This database</div>
+      </div>
+      <div class="import-steps">
+        <div class="import-step">
+          <span class="step-number">1</span>
+          <div class="field">
+          <label for="proto-module-path">Module or repository</label>
+          <input id="proto-module-path" placeholder="example.org/events/proto" autocomplete="off" />
+          <small class="field-help">A stable name used to group versions.</small>
+          </div>
+        </div>
+        <div class="import-step">
+          <span class="step-number">2</span>
+          <div class="field">
+          <label for="proto-module-version">Version</label>
+          <input id="proto-module-version" placeholder="v1.0.0" autocomplete="off" />
+          <small class="field-help">For example a Git tag or commit.</small>
+          </div>
+        </div>
+        <div class="import-step file-step">
+          <span class="step-number">3</span>
+          <div class="field">
+            <label for="proto-descriptor-set">Descriptor set</label>
+            <label class="file-picker" for="proto-descriptor-set">
+              <span class="file-icon">⇧</span>
+              <span><b id="proto-file-name">Choose descriptor bundle</b><small>.pb, .protoset or .binpb · max 32 MiB</small></span>
+            </label>
+            <input id="proto-descriptor-set" class="visually-hidden" type="file" accept=".pb,.protoset,.binpb,application/octet-stream" />
+          </div>
+        </div>
+      </div>
+      <div class="import-actions">
+        <div class="safety-note"><span>✓</span> Staging never changes live decoding.</div>
+        <button id="proto-import" class="primary">Stage module</button>
+        <span id="proto-import-msg" class="msg"></span>
+      </div>
+      <div class="history-head">
+        <div><div class="section-label">Version history</div><p>Existing recordings keep their pinned schemas; activation affects new recordings.</p></div>
+      </div>
+      <div class="table-wrap proto-history-wrap">
+        <table class="recordings">
+          <thead><tr><th>module</th><th>version</th><th>status</th><th>checksum</th><th>imported</th><th></th></tr></thead>
+          <tbody id="proto-history"><tr><td colspan="6" class="empty">No descriptor bundles imported yet.</td></tr></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="card admin-only">
+      <h2>Add topic mapping</h2>
+      <p class="subtitle" style="margin-top:0">
+        Map any NATS topic to any proto type from the modules above. The mapping is stored in
+        Postgres and is immediately recordable — no rebuild. To re-point a topic that already has
+        a mapping, edit it in the table below. (Note: proto payloads carry no field names; the
+        schema is taken from the chosen type's definition.)
+      </p>
+
+      <div class="row">
+        <div class="field">
+          <label for="map-topic">Topic name</label>
+          <input id="map-topic" placeholder="e.g. example.events.raw" autocomplete="off" />
+        </div>
+        <div class="field combo-cell">
+          <label for="map-type">Proto type <small>(type to search)</small></label>
+          <input id="map-type" placeholder="type to search proto types…" autocomplete="off" />
+        </div>
+      </div>
+
+      <div id="type-preview" class="hidden">
+        <div class="field">
+          <label>Schema preview <span id="preview-count" class="db-size"></span></label>
+          <div id="preview-schema" class="schema-grid"></div>
+        </div>
+      </div>
+
+      <div class="actions">
+        <button id="add-btn" class="primary">Add mapping</button>
+        <span id="map-msg" class="msg"></span>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="map-head">
+        <h2 style="margin:0">Topic mappings <span id="map-count" class="db-size"></span></h2>
+        <div class="map-tools">
+          <div class="search">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"
+                 stroke-linecap="round"><circle cx="11" cy="11" r="7" /><path d="M20 20l-3.5-3.5" /></svg>
+            <input id="map-search" type="search" placeholder="Search topic or proto type…" autocomplete="off"
+                   aria-label="Search topic mappings" />
+            <button id="map-clear" class="search-clear hidden" title="Clear" aria-label="Clear search">&times;</button>
+          </div>
+        </div>
+      </div>
+      <p class="subtitle" style="margin-top:0">
+        Every topic Seath can record. All mappings live in the database and are equal — any can be
+        edited or removed. Existing recordings keep their pinned schemas when a mapping changes.
+      </p>
+      <div class="table-wrap">
+        <table class="recordings mappings">
+          <thead>
+            <tr><th>topic</th><th>proto type</th><th class="col-act"></th></tr>
+          </thead>
+          <tbody id="mappings-body">
+            <tr><td colspan="3" class="empty">Loading…</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="pager">
+        <span id="map-range" class="db-size"></span>
+        <span id="map-list-msg" class="msg"></span>
+        <div class="pager-nav">
+          <button id="map-prev" class="small">&larr; prev</button>
+          <span id="map-page" class="pager-page"></span>
+          <button id="map-next" class="small">next &rarr;</button>
+        </div>
+      </div>
+    </section>
+    <section class="card admin-only">
+      <h2>NATS environments <span id="env-count" class="db-size"></span></h2>
+      <p class="subtitle" style="margin-top:0">
+        Add NATS clusters to record from or tap, with no rebuild. Credentials are stored
+        server-side and never sent back to the browser.
+      </p>
+      <div class="table-wrap">
+        <table class="recordings">
+          <thead><tr><th>name</th><th>url</th><th>auth</th><th></th></tr></thead>
+          <tbody id="env-body"><tr><td colspan="4" class="empty">Loading…</td></tr></tbody>
+        </table>
+      </div>
+      <div class="row" style="margin-top:18px">
+        <div class="field"><label for="env-name">Name</label><input id="env-name" placeholder="e.g. staging" autocomplete="off" /></div>
+        <div class="field"><label for="env-url">URL</label><input id="env-url" placeholder="nats://host:4222" autocomplete="off" /></div>
+      </div>
+      <div class="row">
+        <div class="field"><label for="env-user">Username <small>(optional)</small></label><input id="env-user" autocomplete="off" /></div>
+        <div class="field"><label for="env-pass">Password <small>(optional)</small></label><input id="env-pass" type="password" autocomplete="new-password" /></div>
+        <div class="field"><label for="env-token">Token <small>(optional)</small></label><input id="env-token" type="password" autocomplete="new-password" /></div>
+      </div>
+      <div class="actions">
+        <button id="env-add" class="primary">Add environment</button>
+        <span id="env-msg" class="msg"></span>
+      </div>
+    </section>
+
+    <section class="card" id="audit-card" style="display:none">
+      <h2>Recent activity <span id="audit-count" class="db-size"></span></h2>
+      <div class="table-wrap">
+        <table class="recordings">
+          <thead><tr><th>time</th><th>user</th><th>action</th><th>path</th><th class="num">status</th></tr></thead>
+          <tbody id="audit-body"></tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+  <script src="registry.js"></script>
+</body>
+</html>

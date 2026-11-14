@@ -1,0 +1,5 @@
+{
+  "modules": [{"path": "example.org/events", "version": "v1.0.0", "descriptor_file": "../examples/events.protoset"}],
+  "presets": [{"name": "local", "url": "nats://127.0.0.1:4222"}],
+  "mappings": {"example.events": "example.events.Event"}
+}

@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Sign in · Seath</title>
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body class="login-body">
+  <main class="login-wrap">
+    <form class="login-card" id="login-form" method="POST" action="/api/login">
+      <div class="login-brand">
+        <span class="brand-mark"></span>
+        <span class="brand-name">Seath</span>
+      </div>
+      <h1 class="login-title">Sign in</h1>
+      <p class="subtitle">NATS → Postgres recording console</p>
+
+      <div class="field">
+        <label for="u">Username</label>
+        <input id="u" name="username" autocomplete="username" autofocus required />
+      </div>
+      <div class="field">
+        <label for="p">Password</label>
+        <input id="p" name="password" type="password" autocomplete="current-password" required />
+      </div>
+
+      <button class="primary" type="submit">Sign in →</button>
+      <div id="login-msg" class="msg"></div>
+    </form>
+  </main>
+
+  <script>
+    // Surface an error passed back via ?error= after a failed POST redirect.
+    const err = new URLSearchParams(location.search).get("error");
+    if (err) {
+      const m = document.getElementById("login-msg");
+      m.textContent = err;
+      m.className = "msg err";
+    }
+
+    // Guarantee Enter submits from either field (some browsers/autofill states
+    // swallow the implicit submit).
+    const form = document.getElementById("login-form");
+    form.querySelectorAll("input").forEach((inp) => {
+      inp.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") {
+          e.preventDefault();
+          if (typeof form.requestSubmit === "function") form.requestSubmit();
+          else form.submit();
+        }
+      });
+    });
+  </script>
+</body>
+</html>

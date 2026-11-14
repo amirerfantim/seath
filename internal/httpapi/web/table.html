@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>table · Seath</title>
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header class="appbar">
+    <a class="brand" href="/">
+      <span class="brand-mark"></span>
+      <span class="brand-name">Seath</span>
+    </a>
+    <nav class="nav">
+      <a href="/" class="nav-link active">Recordings</a>
+      <a href="/tap.html" class="nav-link">Tap</a>
+      <a href="/registry.html" class="nav-link">Registry</a>
+      <a href="/system.html" class="nav-link">System</a>
+    </nav>
+    <div class="appbar-right"><span id="role-badge" class="role-badge"></span><button id="logout-btn" class="small">Sign out</button></div>
+  </header>
+
+  <main>
+    <section class="card">
+      <h2 id="table-title">Loading…</h2>
+      <div id="insights" class="insights"></div>
+    </section>
+
+    <section class="card">
+      <h2>Columns <span id="col-count" class="db-size"></span></h2>
+      <div id="schema" class="schema-grid"></div>
+    </section>
+
+    <section class="card">
+      <div class="data-head">
+        <h2 style="margin:0">Rows</h2>
+        <div class="data-controls">
+          <label>order
+            <select id="order">
+              <option value="desc">newest first</option>
+              <option value="asc">oldest first</option>
+            </select>
+          </label>
+          <label>page size
+            <select id="page-size">
+              <option>25</option>
+              <option selected>50</option>
+              <option>100</option>
+              <option>200</option>
+            </select>
+          </label>
+          <button id="prev" class="small">&larr; prev</button>
+          <span id="page-info" class="db-size">rows 1–50</span>
+          <button id="next" class="small">next &rarr;</button>
+          <button id="refresh" class="small">refresh</button>
+          <button id="rows-csv" class="small">Page CSV &darr;</button>
+          <a id="table-export" class="btn small" href="#">Export all CSV &darr;</a>
+        </div>
+      </div>
+      <div id="rows-area" class="modal-body" style="max-height:60vh">
+        <table class="preview"><tbody id="rows-body"></tbody></table>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="data-head">
+        <h2 style="margin:0">SQL query <span id="query-limits" class="db-size">· read-only · 90s timeout · max 15,000 rows</span></h2>
+        <div class="data-controls">
+          <button id="query-csv" class="small" disabled>CSV &darr;</button>
+          <button id="query-json" class="small" disabled>JSON &darr;</button>
+          <button id="run-query" class="primary small">Run ▶ <span class="hint">(⌘/Ctrl+Enter)</span></button>
+        </div>
+      </div>
+      <textarea id="sql" class="sql-editor" spellcheck="false" placeholder="SELECT ..."></textarea>
+      <div id="query-msg" class="msg"></div>
+      <div id="query-result" class="modal-body" style="max-height:55vh"></div>
+    </section>
+
+    <section class="card">
+      <h2>Activity <span id="activity-count" class="db-size"></span></h2>
+      <div class="table-wrap">
+        <table class="recordings activity">
+          <thead><tr><th>time</th><th>user</th><th>action</th><th>detail</th><th class="num">status</th></tr></thead>
+          <tbody id="activity-body"><tr><td colspan="5" class="empty">Loading…</td></tr></tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+  <script src="table.js"></script>
+</body>
+</html>
