@@ -1,6 +1,8 @@
 <div align="center">
 
-# 🐉 Seath
+<img src="docs/assets/seath-logo.png" alt="Seath logo" width="160">
+
+# Seath
 
 **Record live NATS streams into PostgreSQL — and explore them from your browser.**
 
