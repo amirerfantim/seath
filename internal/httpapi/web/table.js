@@ -251,8 +251,17 @@ async function applyRole() {
 
 async function loadQueryConfig() {
   try {
-    const cfg = await api("/api/config");
+    const [cfg, me] = await Promise.all([api("/api/config"), api("/api/me")]);
     $("query-limits").textContent = `· read-only · ${cfg.query_timeout_seconds}s timeout · max ${cfg.query_max_rows.toLocaleString()} rows`;
+    // Without a separate read-only login (QUERY_PG_DSN), the server refuses
+    // SQL from viewers. Say so up front instead of failing on Run.
+    if (me.role !== "admin" && cfg.viewer_sql === false) {
+      $("sql").disabled = true;
+      $("run-query").disabled = true;
+      $("sql").placeholder = "The SQL console is for admins on this instance.";
+      $("query-msg").textContent = "An admin can enable it for viewers by setting QUERY_PG_DSN. You can still browse rows and export CSV above.";
+      $("query-msg").className = "msg";
+    }
   } catch { /* keep the server default shown in the page */ }
 }
 

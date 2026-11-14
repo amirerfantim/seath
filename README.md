@@ -41,7 +41,7 @@ You drive the whole thing from a clean web console. No code, no rebuilds.
 | 🗄️ | **Table browser + SQL** | Browse rows, run bounded **read-only** SQL, export a page/query or stream the whole table as CSV. |
 | 🧩 | **Dynamic proto registry** | Upload versioned protobuf descriptor bundles, activate them without rebuilding Seath, and map any NATS topic with a searchable picker. Modules, versions, descriptors, and mappings all live in Postgres, so each Seath instance can own a different catalogue. |
 | 🌐 | **NATS environments** | Switch between DB-configured clusters with a click. Credentials never leave the server. |
-| 🔐 | **Auth & audit** | Cookie login, `admin` / `viewer` roles, and a log of who changed what. |
+| 🔐 | **Auth & audit** | Cookie login, `admin` / `viewer` roles, and a log of who changed what. Viewers browse and export; they get the SQL console only with a separate read-only login (`QUERY_PG_DSN`). |
 | ❤️ | **Health & backpressure** | `/healthz` + `/readyz` probes, and a visible "dropped" counter if it ever can't keep up. |
 
 ---

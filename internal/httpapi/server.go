@@ -311,6 +311,9 @@ func (s *server) limits(w http.ResponseWriter, _ *http.Request) {
 		"min_retention_hours":   1,
 		"query_timeout_seconds": s.mgr.QueryTimeoutSeconds(),
 		"query_max_rows":        s.mgr.QueryMaxRows(),
+		// viewer_sql is false until QUERY_PG_DSN is configured; the table page
+		// then explains why the SQL console is admin-only.
+		"viewer_sql": s.mgr.ViewerSQLAllowed(),
 	})
 }
 

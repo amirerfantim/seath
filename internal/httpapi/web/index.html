@@ -69,7 +69,7 @@
 
         <div class="field">
           <label for="table">Postgres table name</label>
-          <input id="table" placeholder="table name" autocomplete="off" />
+          <input id="table" placeholder="table name" autocomplete="off" pattern="[a-z_][a-z0-9_]{0,62}" title="Lower-case letters, digits and underscores; must not start with a digit; max 63" />
         </div>
 
         <div class="row">

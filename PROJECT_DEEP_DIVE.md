@@ -615,7 +615,8 @@ messages and keeps a small ring buffer of recent payloads, decoding protobuf
 **Purpose.** Cookie-session auth backed by `recorder_users` (bcrypt), two roles,
 and an audit log of mutating actions.
 
-- **Roles** — `admin` (everything), `viewer` (GET + read-only SQL console).
+- **Roles** — `admin` (everything), `viewer` (GET, plus the read-only SQL
+  console only when `QUERY_PG_DSN` is configured).
 - **DDL** — `createUsersTable`, `alterAddRole` (existing users default to admin
   so an upgrade never locks anyone out), `createAuditTable`.
 - **`EnsureUsersTable(db)`** — runs the three DDLs.

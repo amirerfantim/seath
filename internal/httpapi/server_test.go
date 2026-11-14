@@ -34,6 +34,9 @@ func TestLimitsExposeQueryTimeout(t *testing.T) {
 	if !strings.Contains(rec.Body.String(), `"query_max_rows":23456`) {
 		t.Fatalf("response does not expose query row limit: %s", rec.Body.String())
 	}
+	if !strings.Contains(rec.Body.String(), `"viewer_sql":false`) {
+		t.Fatalf("response must tell the UI viewers have no SQL without a reader: %s", rec.Body.String())
+	}
 }
 
 func TestExportRecordingCSVRejectsUnknownRecordingBeforeDownload(t *testing.T) {

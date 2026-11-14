@@ -235,6 +235,18 @@ function collectColumns() {
   }));
 }
 
+// Recording table names must be lower case (the server rejects anything
+// else), so fold what the user types instead of failing on submit.
+$("table").addEventListener("input", (e) => {
+  const el = e.target;
+  const lower = el.value.toLowerCase();
+  if (lower !== el.value) {
+    const pos = el.selectionStart;
+    el.value = lower;
+    el.setSelectionRange(pos, pos);
+  }
+});
+
 // Filled from GET /api/config so the ceiling is the server's, not a copy.
 let maxRetentionHours = null;
 
@@ -262,7 +274,7 @@ async function createRecording() {
   const preset = document.querySelector("input[name=preset]:checked");
   const spec = {
     topic,
-    table: $("table").value.trim(),
+    table: $("table").value.trim().toLowerCase(),
     ...samplingBody("sample-"),
     nats_env: preset ? preset.value : "",
     columns: collectColumns(),

@@ -34,7 +34,13 @@ the reader is the `PG_DSN` role, belongs to any other role (including built-in
 `pg_*` roles), is a superuser or has `BYPASSRLS`/`CREATEROLE`, or has any
 privilege on `recorder_presets`, `recorder_users`, `recorder_audit` or the other
 internal tables. Do not grant the reader anything else. Without
-`QUERY_PG_DSN`, only admins can use the SQL console.
+`QUERY_PG_DSN`, only admins can use the SQL console. Viewers can still browse
+rows and export CSV; the table page tells them the SQL console is admin-only.
+
+Recording table names must be lower-case letters, digits and underscores
+(max 63, not starting with a digit), and must not be one of Seath's own
+tables or an existing table that no recording owns. The console folds what you
+type to lower case; the API rejects other names with a 400.
 
 Set `SEATH_SECRET_KEY` (from `openssl rand -base64 32`) to encrypt NATS
 environment passwords and tokens in the database. On the next start, Seath
