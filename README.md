@@ -8,6 +8,10 @@
 
 *Named after Seath the Scaleless, the archivist dragon: it watches the streams and preserves them.*
 
+[![CI](https://github.com/amirerfantim/seath/actions/workflows/ci.yml/badge.svg)](https://github.com/amirerfantim/seath/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+![Go 1.25+](https://img.shields.io/badge/go-1.25%2B-00ADD8.svg)
+
 </div>
 
 ---
@@ -84,6 +88,54 @@ Three things run side by side:
 ---
 
 ## 🚀 Quick start
+
+### Try the demo (Docker Compose) 🧪
+
+The compose file starts Seath, PostgreSQL and a NATS server on one private
+network. It is a demo: the passwords in it are examples.
+
+```bash
+docker compose up -d --build       # set SEATH_PORT if port 8080 is taken
+docker compose exec seath seath user add admin --role admin --password demo-password
+```
+
+Open <http://localhost:8080> and sign in as `admin`. The steps below do the
+same work as the console, but through the API, so you can copy them. They need
+`protoc` and `curl`.
+
+```bash
+B=http://localhost:8080
+curl -s -c jar -H 'Content-Type: application/json' \
+  -d '{"username":"admin","password":"demo-password"}' $B/api/login
+
+# 1. Tell Seath where NATS is.
+curl -s -b jar -H 'Content-Type: application/json' \
+  -d '{"name":"demo","url":"nats://nats:4222"}' $B/api/presets
+
+# 2. Load a protobuf schema and activate it.
+protoc -I examples --include_imports --descriptor_set_out=event.protoset examples/event.proto
+curl -s -b jar -F module_path=examples/event.proto -F version=v1.0.0 \
+  -F descriptor_set=@event.protoset $B/api/proto/modules
+curl -s -b jar -X PUT $B/api/proto/modules/1/activate
+
+# 3. Map a topic to the message type.
+curl -s -b jar -H 'Content-Type: application/json' \
+  -d '{"topic":"demo.events","proto_name":"example.events.Event"}' $B/api/topic-mappings
+
+# 4. Create a recording, then start it with the "id" from the answer.
+curl -s -b jar -H 'Content-Type: application/json' \
+  -d '{"topic":"demo.events","table":"demo_events","sample_mode":"rate","sample_rate":100,"nats_env":"demo","retention_hours":24}' \
+  $B/api/recordings
+curl -s -b jar -X POST $B/api/recordings/<id>/start
+
+# 5. Publish a message, then read the row back.
+printf 'event_id: 7\nvalue: "hello"\nenabled: true\n' \
+  | protoc -I examples --encode=example.events.Event examples/event.proto \
+  | docker compose run --rm -T nats-box nats pub -s nats://nats:4222 demo.events --force-stdin
+curl -s -b jar "$B/api/recordings/<id>/rows?limit=5"
+```
+
+Stop the demo and delete its data with `docker compose down -v`.
 
 ### Run it locally
 
@@ -175,8 +227,25 @@ internal/
 configs/             📄 example configuration
 ```
 
-> 🔭 Want the full tour — every file, every function, the data flow, and the
-> improvement backlog? Read **[`PROJECT_DEEP_DIVE.md`](PROJECT_DEEP_DIVE.md)**.
+> 🔭 Want the full tour — every endpoint, every file and the data flow? Read
+> **[`docs/architecture.md`](docs/architecture.md)**. What is planned next is in
+> **[`docs/roadmap.md`](docs/roadmap.md)**.
+
+---
+
+## 🧪 Development
+
+You need Go 1.25 or newer (see `go.mod`). CI runs these checks
+([`ci.yml`](.github/workflows/ci.yml)):
+
+```bash
+test -z "$(gofmt -l cmd internal)"      # formatting
+go vet ./...
+go test -race ./...
+python3 -m unittest discover -s tools   # bootstrap helpers
+go build -trimpath -buildvcs=false -o /tmp/seath ./cmd
+docker build -t seath:test .
+```
 
 ---
 

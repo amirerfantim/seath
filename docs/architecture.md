@@ -1,9 +1,8 @@
-# Seath — Project Deep Dive
+# Seath — Architecture
 
-> A complete, ground-up analysis of the Seath codebase: architecture, data flow,
-> every endpoint, a file-by-file and function-by-function breakdown, a dead-code
-> audit, and a prioritized improvement backlog including a concrete Kubernetes
-> resource-monitoring design.
+> A ground-up description of the Seath codebase: architecture, data flow, every
+> endpoint, and a file-by-file breakdown. What is planned next is in the
+> [roadmap](roadmap.md).
 
 **What Seath is, in one paragraph.** Seath is a Go service that subscribes to
 NATS subjects, decodes each message as a known Protocol Buffers type, keeps a
@@ -20,13 +19,11 @@ the Scaleless*, the archivist dragon — it watches streams and preserves them.
 ## Table of Contents
 
 1. [Phase 1 — Architecture & Data Flow](#phase-1--architecture--data-flow)
-   - [1.1 Data-flow diagram](#11-dataflow-diagram)
+   - [1.1 Data-flow diagram](#11-data-flow-diagram)
    - [1.2 Project structure & architecture](#12-project-structure--architecture)
    - [1.3 API endpoints](#13-api-endpoints)
-2. [Phase 2 — File-by-file deep dive](#phase-2--filebyfile-deep-dive)
-3. [Phase 3 — Code cleanup & dead code](#phase-3--code-cleanup--dead-code)
-4. [Phase 4 — Improvement backlog & K8s monitoring](#phase-4--improvement-backlog--k8s-monitoring)
-5. [Appendix — Data model & lifecycle](#appendix--data-model--lifecycle)
+2. [Phase 2 — File-by-file deep dive](#phase-2--file-by-file-deep-dive)
+3. [Appendix — Data model & lifecycle](#appendix--data-model--lifecycle)
 
 ---
 
@@ -38,7 +35,7 @@ The diagram below traces a message from the moment it is published on NATS to
 the moment it is read back by a human in the browser, plus the control plane
 (the API that creates and manages recordings).
 
-![Complete Seath data flow showing the ingest path (NATS to sampling gate to proto decode to bounded channel to batch writer to Postgres), the diagnostic tap path, and the control plane (browser to auth middleware to manager to recorders/taps and persistence)](docs/diagrams/dataflow.svg)
+![Complete Seath data flow showing the ingest path (NATS to sampling gate to proto decode to bounded channel to batch writer to Postgres), the diagnostic tap path, and the control plane (browser to auth middleware to manager to recorders/taps and persistence)](diagrams/dataflow.svg)
 
 <details><summary>Diagram source (Mermaid)</summary>
 
@@ -351,7 +348,7 @@ table-name sanitizer. Two entry points so `serve` (which only needs the DSN) and
 
 > Types: `Config`, `NATSConfig`, `PostgresConfig` mirror the YAML shape. Note
 > `NATSConfig.Mode` (core/jetstream) is parsed but not currently consumed by the
-> recorder — see [Phase 3](#phase-3--code-cleanup--dead-code).
+> recorder. JetStream support is on the [roadmap](roadmap.md).
 
 ## `internal/natspreset/presets.go` — NATS environments
 
@@ -423,8 +420,6 @@ runs only in read-only transactions.
   absent, with quoted identifiers.
 - **`DeleteOlderThan(db, table, hours)`** — retention: deletes rows whose
   `received_at` is older than N hours; returns rows deleted; no-op when hours ≤ 0.
-- **`Insert(...)`** — single-row insert. **Unused** in the current codebase (see
-  Phase 3); `InsertBatch` is the live path.
 - **`Row`** (type) — one buffered message: `Subject` + ordered `Vals`.
 - **`InsertBatch(db, table, cols, rows)`** — the hot write. Builds one multi-row
   `INSERT ... VALUES (...),(...),...` with `received_at = NOW()` per row and
@@ -684,244 +679,6 @@ enumerated in [1.3](#13-api-endpoints); this section covers the mechanics.)
   tables, modals, responsive nav). **`web/favicon.svg`** — the dragon mark.
 
 ---
-
-# Phase 3 — Code cleanup & dead code
-
-## 3.1 Dead / unused code (safe to remove)
-
-| Item | Location | Evidence | Recommendation |
-|---|---|---|---|
-| **`pg.Insert` (single-row insert)** | `internal/pg/pg.go` | Zero callers (`grep` finds only the definition; the live write path is `InsertBatch`). | **Delete.** Removes ~30 lines and one easy-to-misuse API. |
-| **`schema.go` trailing `var _ = time.Time{}`** | `internal/schema/schema.go:173` | `time` is now genuinely used in `extractValue`, so the keep-alive blank no longer serves a purpose. | Delete the line and the comment. |
-| **`NATSConfig.Mode` (core/jetstream)** | `internal/config/config.go` | Parsed from YAML and `NATS_MODE`, but no consumer — the recorder always uses core NATS `Subscribe`. | Either wire JetStream support or drop the field + env override to avoid implying a feature that doesn't exist. |
-
-## 3.2 Conditionally unused in the *current deployment* (keep, but know the status)
-
-These are not dead code, but they are not exercised by the Kubernetes `serve`
-deployment. They remain valuable as CLI tooling and should be kept.
-
-- **`start` command + `recorder.Run` + `config.Load`** — the headless
-  single-topic recorder. A container deployment runs `serve`; `start` is
-  still useful for local/manual captures and is the only consumer of much of
-  `config`.
-- **`schema` command** — offline proto→column preview. Pure developer tool.
-- **`configs/config.yaml`** — only consumed by `start`. It is a synthetic
-  *example*, never live configuration.
-
-## 3.3 Working-tree hygiene
-
-A working checkout usually holds files that are **not** part of the project:
-vendored dependencies, editor/IDE settings, local tool or agent state, build
-output, captured descriptors and database dumps. `.gitignore` lists these
-categories and must stay that way.
-
-Two rules follow from that:
-
-1. **Never package the working directory.** Build release artifacts from a clean
-   source export (`git archive`, or a fresh clone), never from the directory you
-   develop in. The Docker build context is already restricted to application
-   code by `.dockerignore`.
-2. **Treat local tool state as untrusted for publication.** Editor histories,
-   shell snapshots and agent session logs can contain pasted credentials. They
-   are gitignored on purpose; do not relax that, and do not copy them into an
-   archive or image.
-
----
-
-# Phase 4 — Improvement backlog & K8s monitoring
-
-## 4.1 Prioritized improvement backlog
-
-### P0 — correctness & safety
-
-1. **Singleton enforcement.** The single-writer invariant (one replica) is only
-   enforced by deployment configuration today. Add a Postgres advisory lock
-   (`pg_try_advisory_lock`) on boot so a second `serve` process refuses to run
-   recorders — defense in depth against an accidental scale-up or an overlapping
-   rollout. Pairs with the existing `Recreate` deploy strategy.
-2. **Identifier validation on table names.** Table names come from user input and
-   are interpolated into DDL in a few places. `pq.QuoteIdentifier` is used for
-   most, but `EnsureTable`/`InsertBatch` build names via `fmt`. Add a strict
-   `^[a-z_][a-z0-9_]*$` validator at the manager boundary to remove any doubt.
-3. **Graceful NATS slow-consumer handling.** Today a full `rowCh` drops messages.
-   Add a per-recording "dropped in last minute" gauge and surface it as a UI
-   warning + optional Prometheus metric, so silent loss becomes visible.
-
-### P1 — observability
-
-4. **Prometheus `/metrics`.** Export per-recording received/written/errors/
-   dropped, write-batch latency, NATS connection state, and DB pool stats. This
-   slots into any Prometheus setup that already scrapes the pod.
-5. **Resource monitoring in the UI** — see [4.2](#42-kubernetes-resource-monitoring) (designed below).
-6. **Structured request logging + trace IDs** for the API.
-
-### P1 — features
-
-7. **JetStream support.** Honor `NATSConfig.Mode` (currently parsed, unused):
-   durable consumers + replay would let Seath backfill, not just tail.
-8. **Column transforms.** Allow simple per-column expressions (e.g. epoch→
-   timestamp, enum→label) at extract time.
-9. **Export the whole table**, not just the current page, via a streaming
-   `COPY ... TO STDOUT` CSV endpoint.
-10. **Recording templates / clone** — "record this topic like that one".
-
-### P2 — platform & DX
-
-11. **Tests.** Unit tests run without a database. Ongoing targets:
-    `schema.Introspect`/`ExtractValues`, the sampling gate math, `InsertBatch`
-    SQL generation, and `config` env overrides.
-12. **Secrets at rest.** Done: with `SEATH_SECRET_KEY`, preset passwords and
-    tokens are AES-256-GCM encrypted (`internal/secretbox`). Still open:
-    automated key rotation.
-13. **Seed required NATS environments during provisioning** so a fresh DB is
-    ready without compiling infrastructure endpoints into the application.
-
-## 4.2 Kubernetes resource monitoring
-
-**Goal.** Show, live in the UI, the pod's CPU and memory usage vs. its
-configured limits — without depending on `metrics-server` or extra RBAC.
-
-**Feasibility.** Seath runs as a single container. Where cgroup v2 is mounted
-read-only at `/sys/fs/cgroup`, the container can read its own usage and limits
-directly:
-
-| Source file | Meaning | Shape of the value |
-|---|---|---|
-| `/sys/fs/cgroup/memory.current` | current memory bytes | integer bytes |
-| `/sys/fs/cgroup/memory.max` | memory limit bytes | integer bytes, or `max` when unlimited |
-| `/sys/fs/cgroup/cpu.max` | `quota period` (µs) | e.g. `50000 100000` → 0.5 CPU; `max` when unlimited |
-| `/sys/fs/cgroup/cpu.stat` → `usage_usec` | cumulative CPU µs | monotonic; rate over an interval = cores used |
-
-Because these are local file reads, **no `metrics.k8s.io` access, no
-`metrics-server`, and no new RBAC are required.** This is the cleanest possible
-approach and works the same in any cgroup-v2 cluster.
-
-### Design
-
-Add a small `internal/sysstat` package and a `GET /api/system` endpoint (viewer-
-readable). The handler reads cgroup files, computes CPU usage as a delta between
-two `usage_usec` samples ~250 ms apart, and reports memory current/limit. The UI
-adds two gauges to the registry (or a new "System" card) fed by the existing
-1 Hz SSE pattern, or a simple 2 s poll.
-
-**`internal/sysstat/sysstat.go` (new):**
-
-```go
-// Package sysstat reads this container's cgroup v2 CPU and memory accounting.
-// It needs no Kubernetes API access — only the read-only /sys/fs/cgroup mount.
-package sysstat
-
-import (
-	"os"
-	"strconv"
-	"strings"
-	"time"
-)
-
-// Sample is a point-in-time view of container resource use vs. its limits.
-type Sample struct {
-	MemoryBytes      int64   `json:"memory_bytes"`
-	MemoryLimitBytes int64   `json:"memory_limit_bytes"` // 0 = unlimited
-	MemoryPercent    float64 `json:"memory_percent"`
-	CPUCores         float64 `json:"cpu_cores"`        // cores used over the sample window
-	CPULimitCores    float64 `json:"cpu_limit_cores"`  // 0 = unlimited
-	CPUPercent       float64 `json:"cpu_percent"`      // of the limit
-}
-
-const base = "/sys/fs/cgroup"
-
-func readInt(path string) (int64, bool) {
-	b, err := os.ReadFile(path)
-	if err != nil {
-		return 0, false
-	}
-	n, err := strconv.ParseInt(strings.TrimSpace(string(b)), 10, 64)
-	return n, err == nil
-}
-
-// cpuUsageMicros returns cumulative CPU time (usage_usec) from cpu.stat.
-func cpuUsageMicros() (int64, bool) {
-	b, err := os.ReadFile(base + "/cpu.stat")
-	if err != nil {
-		return 0, false
-	}
-	for _, line := range strings.Split(string(b), "\n") {
-		if strings.HasPrefix(line, "usage_usec ") {
-			n, err := strconv.ParseInt(strings.TrimSpace(line[len("usage_usec "):]), 10, 64)
-			return n, err == nil
-		}
-	}
-	return 0, false
-}
-
-// cpuLimitCores parses cpu.max ("quota period"; "max" period = unlimited).
-func cpuLimitCores() float64 {
-	b, err := os.ReadFile(base + "/cpu.max")
-	if err != nil {
-		return 0
-	}
-	f := strings.Fields(strings.TrimSpace(string(b)))
-	if len(f) != 2 || f[0] == "max" {
-		return 0
-	}
-	quota, err1 := strconv.ParseFloat(f[0], 64)
-	period, err2 := strconv.ParseFloat(f[1], 64)
-	if err1 != nil || err2 != nil || period == 0 {
-		return 0
-	}
-	return quota / period
-}
-
-// Read samples CPU over `window` (block briefly) and memory instantaneously.
-func Read(window time.Duration) Sample {
-	var s Sample
-
-	if cur, ok := readInt(base + "/memory.current"); ok {
-		s.MemoryBytes = cur
-	}
-	if max, ok := readInt(base + "/memory.max"); ok { // "max" file may be literal "max"
-		s.MemoryLimitBytes = max
-	}
-	if s.MemoryLimitBytes > 0 {
-		s.MemoryPercent = float64(s.MemoryBytes) / float64(s.MemoryLimitBytes) * 100
-	}
-
-	if u0, ok := cpuUsageMicros(); ok {
-		time.Sleep(window)
-		if u1, ok := cpuUsageMicros(); ok {
-			s.CPUCores = float64(u1-u0) / float64(window.Microseconds())
-		}
-	}
-	s.CPULimitCores = cpuLimitCores()
-	if s.CPULimitCores > 0 {
-		s.CPUPercent = s.CPUCores / s.CPULimitCores * 100
-	}
-	return s
-}
-```
-
-**Wiring (in `internal/httpapi/server.go`):**
-
-```go
-mux.HandleFunc("GET /api/system", s.system)
-// ...
-func (s *server) system(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, http.StatusOK, sysstat.Read(250*time.Millisecond))
-}
-```
-
-**UI.** Add two gauges (memory %, CPU %) to `registry.html`, fed by a 2 s poll of
-`/api/system`, rendering `cpu_cores`/`cpu_limit_cores` and
-`memory_bytes`/`memory_limit_bytes`. No new dependencies.
-
-**Caveats.** `memory.max` can be the literal string `max` (unlimited) — guard the
-parse (the helper returns "not ok" and `MemoryLimitBytes` stays 0). The 250 ms
-sample blocks one request goroutine briefly; keep it modest and don't put it on
-the 1 Hz SSE if you want to avoid steady CPU cost. If the cluster ever runs
-cgroup v1, add a v1 fallback (`memory.usage_in_bytes`, `cpuacct.usage`).
-
----
-
 # Appendix — Data model & lifecycle
 
 ### Metadata tables (created idempotently at startup)
@@ -937,7 +694,7 @@ cgroup v1, add a v1 fallback (`memory.usage_in_bytes`, `cpuacct.usage`).
 
 ### Recording state machine
 
-![Recording state machine: stopped on create, start to running, stop back to stopped, running to error on NATS/PG failure, error back to running via the 30s retry loop, and delete from stopped which drops the table](docs/diagrams/state.svg)
+![Recording state machine: stopped on create, start to running, stop back to stopped, running to error on NATS/PG failure, error back to running via the 30s retry loop, and delete from stopped which drops the table](diagrams/state.svg)
 
 <details><summary>Diagram source (Mermaid)</summary>
 
@@ -964,6 +721,5 @@ stateDiagram-v2
 The recorder is a single writer that converges `recorder_jobs.desired_state`
 in-process. Two replicas would each subscribe to the same subjects and both
 write — duplicating rows and doubling NATS load. This is enforced operationally
-(one replica, `Recreate` rollout strategy) and is the recommended target for
-the P0 advisory-lock hardening above.
-```
+(one replica, `Recreate` rollout strategy). An advisory-lock guard that
+enforces it in code is on the [roadmap](roadmap.md).
